@@ -2,13 +2,14 @@ import argparse
 import math
 import time
 from pathlib import Path
+from tqdm import tqdm
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from model import MultiTimeframeCNN
+from models.cnn.train.model import MultiTimeframeCNN
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 MASTER_DIR = BASE_DIR / "data" / "master_training"
@@ -129,7 +130,7 @@ def main():
 
     print(f"Starting training on {device} | train={train_size} val={val_size} test={test_size}")
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in tqdm(range(1, args.epochs + 1)):
         model.train()
         epoch_start = time.time()
         train_loss_sum = 0.0

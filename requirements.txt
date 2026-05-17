@@ -1,8 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 pandas
 matplotlib
 numpy
 mplfinance
-torch
 tqdm
 pyarrow
-# pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch

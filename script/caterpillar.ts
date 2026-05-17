@@ -49,14 +49,14 @@ async function downloadOHLCVData() {
     // const symbolName = "jioFinancial";
     const instrumentKey = encodeURIComponent(instrumentValue);
     // const instrumentKey = SYMBOLS.jioFinancial;
-    const data_path = path.join(BASE_DIR, "data", "raw", "1D", `${symbolName}_ohlcv.json`);
+    const data_path = path.join(BASE_DIR, "data", "raw", "1H", `${symbolName}_ohlcv.json`);
 
     // Ensure the directory exists
     const dir = path.dirname(data_path);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
     // Start at the beginning of the year
-    let currentYear = 2015; // Upstox data starts from 2006
+    let currentYear = 2022; // Upstox data starts from 2006
     let currentMonth = 0; // January
 
     const now = new Date();
@@ -80,7 +80,7 @@ async function downloadOHLCVData() {
       const toDate = endOfMonth > now ? now : endOfMonth;
       const toDateStr = toDate.toISOString().split("T")[0];
 
-      const url = `https://api.upstox.com/v3/historical-candle/${instrumentKey}/days/1/${toDateStr}/${fromDateStr}`;
+      const url = `https://api.upstox.com/v3/historical-candle/${instrumentKey}/hours/1/${toDateStr}/${fromDateStr}`;
 
       try {
         await new Promise((resolve) => setTimeout(resolve, 100));

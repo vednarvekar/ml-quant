@@ -26,6 +26,7 @@ dist-ssr
 # Ignore the main environment file
 .env
 .venv
+venv/
 
 # Ignore environment file variants
 .env.local
@@ -35,8 +36,7 @@ dist-ssr
 data/processed/**/*.npy
 .npy
 *.pth
-data/raw
-data/
+
 
 # --- DATA MANAGEMENT ---
 # We are now using Git LFS for .npy and .json files.

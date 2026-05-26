@@ -16,7 +16,7 @@ What this adds over the old version
 
 Output per stock  (in data/processed/<stock>/)
 ───────────────────────────────────────────────
-  X_1min.npy        float32  (N, 60, F)
+  X_3min.npy        float32  (N, 60, F)
   X_5min.npy        float32  (N, 60, F)
   X_15min.npy       float32  (N, 60, F)
   X_1hr.npy         float32  (N, 60, F)
@@ -84,7 +84,7 @@ def parse_args():
 
 def list_stocks():
     stocks = set()
-    for tf in ["1min", "5min", "15min", "1hr", "1d"]:
+    for tf in ["3M", "5M", "15M", "1H", "1D"]:
         for path in (RAW_DIR / tf).glob("*_ohlcv.json"):
             stocks.add(path.stem.replace("_ohlcv", ""))
     return sorted(stocks)
@@ -368,17 +368,17 @@ def process_stock(stock: str):
 
     # ── load raw frames ───────────────────────────────────────────────────────
     paths = {
-        "1min":  RAW_DIR / "1min"  / f"{stock}_ohlcv.json",
-        "5min":  RAW_DIR / "5min"  / f"{stock}_ohlcv.json",
-        "15min": RAW_DIR / "15min" / f"{stock}_ohlcv.json",
-        "1hr":   RAW_DIR / "1hr"   / f"{stock}_ohlcv.json",
-        "1d":    RAW_DIR / "1d"    / f"{stock}_ohlcv.json",
+        "3min":  RAW_DIR / "3M"  / f"{stock}_ohlcv.json",
+        "5min":  RAW_DIR / "5M"  / f"{stock}_ohlcv.json",
+        "15min": RAW_DIR / "15M" / f"{stock}_ohlcv.json",
+        "1hr":   RAW_DIR / "1H"  / f"{stock}_ohlcv.json",
+        "1d":    RAW_DIR / "1D"  / f"{stock}_ohlcv.json",
     }
     for k, p in paths.items():
         if not p.exists():
             raise FileNotFoundError(f"Missing {k} file for {stock}: {p}")
 
-    df_1m  = load_frame(paths["1min"])
+    df_3m  = load_frame(paths["3min"])
     df_5m  = load_frame(paths["5min"])
     df_15m = load_frame(paths["15min"])
     df_1h  = load_frame(paths["1hr"])
@@ -386,7 +386,7 @@ def process_stock(stock: str):
 
     # ── build full feature matrices (one row per candle) ─────────────────────
     print(f"  Building feature matrices...", flush=True)
-    feat_1m  = build_features(df_1m)
+    feat_3m  = build_features(df_3m)
     feat_5m  = build_features(df_5m)
     feat_15m = build_features(df_15m)
     feat_1h  = build_features(df_1h)
@@ -400,7 +400,7 @@ def process_stock(stock: str):
     # Start late enough that we have 60 daily candles (≈60 trading days ≈ 3 months)
     start_index = max(WINDOW, 720)   # 720 5-min bars ≈ 1 trading week
 
-    x1_list, x5_list, x15_list, xh_list, xd_list = [], [], [], [], []
+    x3_list, x5_list, x15_list, xh_list, xd_list = [], [], [], [], []
     xs_list = []
     y_list, yret_list, ts_list = [], [], []
 
@@ -419,16 +419,16 @@ def process_stock(stock: str):
                 return None
             return feat_mat[start:pos]
 
-        w1m  = tail_feat(df_1m,  feat_1m,  WINDOW)
+        w3m  = tail_feat(df_3m,  feat_3m,  WINDOW)
         w5m  = tail_feat(df_5m,  feat_5m,  WINDOW)
         w15m = tail_feat(df_15m, feat_15m, WINDOW)
         w1h  = tail_feat(df_1h,  feat_1h,  WINDOW)
         w1d  = tail_feat(df_1d,  feat_1d,  WINDOW)
 
-        if any(w is None or len(w) < WINDOW for w in [w1m, w5m, w15m, w1h, w1d]):
+        if any(w is None or len(w) < WINDOW for w in [w3m, w5m, w15m, w1h, w1d]):
             continue
 
-        assert w1m is not None
+        assert w3m is not None
         assert w5m is not None
         assert w15m is not None
         assert w1h is not None
@@ -445,7 +445,7 @@ def process_stock(stock: str):
         scalar = build_scalar_features(df_1d, df_1h, df_5m, anchor_time, atr_val)
 
         # ── normalise windows ─────────────────────────────────────────────────
-        x1_list.append(normalise_window(w1m))
+        x3_list.append(normalise_window(w3m))
         x5_list.append(normalise_window(w5m))
         x15_list.append(normalise_window(w15m))
         xh_list.append(normalise_window(w1h))
@@ -466,7 +466,7 @@ def process_stock(stock: str):
     out = PROCESSED_DIR / stock
     out.mkdir(parents=True, exist_ok=True)
 
-    np.save(out / "X_1min.npy",  np.asarray(x1_list,   dtype=np.float32))
+    np.save(out / "X_3min.npy",  np.asarray(x3_list,   dtype=np.float32))
     np.save(out / "X_5min.npy",  np.asarray(x5_list,   dtype=np.float32))
     np.save(out / "X_15min.npy", np.asarray(x15_list,  dtype=np.float32))
     np.save(out / "X_1hr.npy",   np.asarray(xh_list,   dtype=np.float32))

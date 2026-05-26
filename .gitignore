@@ -33,6 +33,7 @@ venv/
 .env.*.local
 
 # Ignore processed data arrays (too large for LFS quota)
+master_splits*
 data/processed/**/*.npy
 .npy
 *.pth

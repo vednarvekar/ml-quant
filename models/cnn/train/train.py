@@ -7,14 +7,15 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset  # Switched TensorDataset to base Dataset for disk-mapping
 
-from models.cnn.train.model import MultiTimeframeCNN
+from model import MultiTimeframeCNN
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-MASTER_DIR = BASE_DIR / "data" / "master_training"
-MODEL_OUTPUT = BASE_DIR / "models" / "cnn" / "cnn_model.pth"
-
+# ── Updated Path Rules ───────────────────────────────────────────────────────
+# Go 4 levels up to hit your true root directory (~/ml-quant)
+BASE_DIR      = Path(__file__).resolve().parent.parent.parent.parent
+MASTER_DIR    = BASE_DIR / "data" / "processed" / "master_splits"
+MODEL_OUTPUT  = BASE_DIR / "models" / "cnn" / "cnn_model.pth"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train CNN on train/val/test split data.")
@@ -28,13 +29,47 @@ def parse_args():
     return parser.parse_args()
 
 
+# ── Memory-Mapped Custom Dataset Class ───────────────────────────────────────
+class MappedStockDataset(Dataset):
+    """
+    Custom Dataset that references arrays on your hard drive via memory maps.
+    This prevents pulling all 1.08 million records into system RAM simultaneously.
+    """
+    def __init__(self, prefix):
+        # np.load(..., mmap_mode='r') keeps the file open on disk without allocating data arrays to RAM
+        self.x3m_map = np.load(MASTER_DIR / f"{prefix}_X_3min.npy", mmap_mode='r')
+        self.x5m_map = np.load(MASTER_DIR / f"{prefix}_X_5min.npy", mmap_mode='r')
+        self.x1h_map = np.load(MASTER_DIR / f"{prefix}_X_1hr.npy", mmap_mode='r')
+        self.y_map   = np.load(MASTER_DIR / f"{prefix}_y_labels.npy", mmap_mode='r')
+        self.length  = self.y_map.shape[0]
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        # Extract only the exact index slice requested by the DataLoader batch window
+        # .copy() drops read-only memory locks to pass clean PyTorch tensors smoothly
+        x3m = torch.from_numpy(self.x3m_map[idx].copy()).float().unsqueeze(0) # Unsqueeze(0) replaces old .unsqueeze(1) for item lookup
+        x5m = torch.from_numpy(self.x5m_map[idx].copy()).float().unsqueeze(0)
+        x1h = torch.from_numpy(self.x1h_map[idx].copy()).float().unsqueeze(0)
+        y   = torch.tensor(self.y_map[idx]).long()
+        
+        return x3m, x5m, x1h, y
+
+
 def load_split(prefix):
-    # Each split contains one array per timeframe plus the class labels.
-    x1 = torch.from_numpy(np.load(MASTER_DIR / f"{prefix}_X1.npy")).float().unsqueeze(1)
-    x5 = torch.from_numpy(np.load(MASTER_DIR / f"{prefix}_X5.npy")).float().unsqueeze(1)
-    xh = torch.from_numpy(np.load(MASTER_DIR / f"{prefix}_XH.npy")).float().unsqueeze(1)
-    y = torch.from_numpy(np.load(MASTER_DIR / f"{prefix}_y.npy")).long()
-    return TensorDataset(x1, x5, xh, y)
+    """
+    prefix will be 'TRAIN', 'VAL', or 'TEST'.
+    Make sure your master dataset compilation script saves the combined files 
+    using the exact suffixes below matching your 3min, 5min, and 1hr selections.
+    """
+    # 1. Match 'X_3min' instead of X1 or X3
+    # 2. Match 'X_5min' instead of X5
+    # 3. Match 'X_1hr' instead of XH
+    # 4. Match the labels
+    
+    # Returns our memory-efficient implementation wrapping the targets
+    return MappedStockDataset(prefix)
 
 
 def get_loaders(batch_size):
@@ -42,9 +77,10 @@ def get_loaders(batch_size):
     val_dataset = load_split("VAL")
     test_dataset = load_split("TEST")
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    # num_workers allows asynchronous asynchronous pre-fetching of slices from your disk storage
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=False)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=False)
 
     return train_loader, val_loader, test_loader, len(train_dataset), len(val_dataset), len(test_dataset)
 
@@ -64,7 +100,6 @@ def progress_bar(step, total, width=24):
 
 
 def compute_metrics(preds, labels):
-    # Balanced accuracy matters here because neutral dominates the dataset.
     preds = np.asarray(preds)
     labels = np.asarray(labels)
 
@@ -84,20 +119,19 @@ def compute_metrics(preds, labels):
 
 
 def evaluate(model, loader, criterion, device):
-    # Validation and test both use the same evaluation path.
     model.eval()
     total_loss = 0.0
     all_preds = []
     all_labels = []
 
     with torch.no_grad():
-        for b_x1, b_x5, b_xh, b_y in loader:
-            b_x1 = b_x1.to(device)
+        for b_x3, b_x5, b_xh, b_y in loader:
+            b_x3 = b_x3.to(device)
             b_x5 = b_x5.to(device)
             b_xh = b_xh.to(device)
             b_y = b_y.to(device)
 
-            outputs = model(b_x1, b_x5, b_xh)
+            outputs = model(b_x3, b_x5, b_xh)
             loss = criterion(outputs, b_y)
             total_loss += loss.item()
 
@@ -118,7 +152,6 @@ def main():
     train_loader, val_loader, test_loader, train_size, val_size, test_size = get_loaders(args.batch_size)
 
     model = MultiTimeframeCNN().to(device)
-    # Heavier weights on buy/sell reduce the tendency to predict neutral too often.
     criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.0, 10.0, 10.0], device=device))
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", patience=2, factor=0.5)
@@ -140,17 +173,16 @@ def main():
 
         print(f"\nEpoch {epoch}/{args.epochs}")
 
-        for step, (b_x1, b_x5, b_xh, b_y) in enumerate(train_loader, start=1):
-            b_x1 = b_x1.to(device)
+        for step, (b_x3, b_x5, b_xh, b_y) in enumerate(train_loader, start=1):
+            b_x3 = b_x3.to(device)
             b_x5 = b_x5.to(device)
             b_xh = b_xh.to(device)
             b_y = b_y.to(device)
 
             optimizer.zero_grad()
-            outputs = model(b_x1, b_x5, b_xh)
+            outputs = model(b_x3, b_x5, b_xh)
             loss = criterion(outputs, b_y)
             loss.backward()
-            # Clipping keeps unstable batches from exploding the gradients.
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
@@ -164,9 +196,11 @@ def main():
                 eta = (elapsed / step) * (total_steps - step)
                 avg_train_loss = train_loss_sum / step
                 avg_train_acc = train_correct / train_seen if train_seen else 0.0
+                
+                # Formatted to % by multiplying by 100
                 print(
                     f"Epoch {epoch}/{args.epochs} | train {progress_bar(step, total_steps)} "
-                    f"{step}/{total_steps} | loss {avg_train_loss:.4f} | acc {avg_train_acc:.4f} | "
+                    f"{step}/{total_steps} | loss {avg_train_loss * 100:.2f}% | acc {avg_train_acc * 100:.2f}% | "
                     f"elapsed {format_time(elapsed)} | eta {format_time(eta)}"
                 )
 
@@ -175,10 +209,8 @@ def main():
 
         print(f"Epoch {epoch}/{args.epochs} | val   {progress_bar(len(val_loader), len(val_loader))} evaluating")
         val_loss, val_acc, val_bal_acc, val_recalls = evaluate(model, val_loader, criterion, device)
-        # The scheduler only reacts to validation loss, not training loss.
         scheduler.step(val_loss)
 
-        # Save only when validation loss makes a real improvement.
         improved = val_loss < (best_val_loss - args.early_stop_min_delta)
         if improved:
             best_val_loss = val_loss
@@ -194,28 +226,30 @@ def main():
         total_elapsed = time.time() - total_start
         remaining = epoch_time * (args.epochs - epoch)
 
+        # Multiplied metrics by 100 and changed formatting suffix to :.2f% 
         print(
             f"Epoch {epoch}/{args.epochs} | "
-            f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | "
-            f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | Val Bal Acc: {val_bal_acc:.4f} | "
-            f"Recall N/B/S: {val_recalls[0]:.4f}/{val_recalls[1]:.4f}/{val_recalls[2]:.4f} | "
-            f"Best Val Loss: {best_val_loss:.4f} @ epoch {best_epoch} | "
+            f"Train Loss: {train_loss * 100:.2f}% | Train Acc: {train_acc * 100:.2f}% | "
+            f"Val Loss: {val_loss * 100:.2f}% | Val Acc: {val_acc * 100:.2f}% | Val Bal Acc: {val_bal_acc * 100:.2f}% | "
+            f"Recall N/B/S: {val_recalls[0] * 100:.2f}%/{val_recalls[1] * 100:.2f}%/{val_recalls[2] * 100:.2f}% | "
+            f"Best Val Loss: {best_val_loss * 100:.2f}% @ epoch {best_epoch} | "
             f"status: {status} | LR: {optimizer.param_groups[0]['lr']:.6f} | "
             f"epoch time {format_time(epoch_time)} | total {format_time(total_elapsed)} | "
             f"remaining {format_time(remaining)}"
         )
 
         if no_improve_count >= args.early_stop_patience:
-            print(f"Early stopping triggered at epoch {epoch}. Best validation loss was {best_val_loss:.4f} at epoch {best_epoch}.")
+            print(f"Early stopping triggered at epoch {epoch}. Best validation loss was {best_val_loss * 100:.2f}% at epoch {best_epoch}.")
             break
 
-    # Final test metrics are reported from the best saved checkpoint, not the last epoch.
     model.load_state_dict(torch.load(MODEL_OUTPUT, map_location=device))
     print(f"\nBest Model Test {progress_bar(len(test_loader), len(test_loader))} evaluating")
     test_loss, test_acc, test_bal_acc, test_recalls = evaluate(model, test_loader, criterion, device)
+    
+    # Updated final test evaluation print
     print(
-        f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f} | Test Bal Acc: {test_bal_acc:.4f} | "
-        f"Recall N/B/S: {test_recalls[0]:.4f}/{test_recalls[1]:.4f}/{test_recalls[2]:.4f}"
+        f"Test Loss: {test_loss * 100:.2f}% | Test Acc: {test_acc * 100:.2f}% | Test Bal Acc: {test_bal_acc * 100:.2f}% | "
+        f"Recall N/B/S: {test_recalls[0] * 100:.2f}%/{test_recalls[1] * 100:.2f}%/{test_recalls[2] * 100:.2f}%"
     )
     print(f"Best model saved to {MODEL_OUTPUT}")
 

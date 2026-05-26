@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class CNNBranch(nn.Module):
-    def __init__(self, num_features):
+    def __init__(self):
         super().__init__()
         # Input shape: (Batch, 1, 60, 6)
         self.conv1 = nn.Conv2d(1, 32, kernel_size=(3,2), padding=1)

@@ -315,12 +315,12 @@ def build_scalar_features(df_1d: pd.DataFrame,
     # ── support & resistance from daily pivots (last 120 days) ───────────────
     hist_1d = df_1d.loc[:anchor_time].tail(120)
     if len(hist_1d) >= 5:
-        highs  = hist_1d["high"].values
-        lows   = hist_1d["low"].values
+        highs = hist_1d["high"].to_numpy(dtype=np.float64)
+        lows = hist_1d["low"].to_numpy(dtype=np.float64)
         res_candidates = highs[highs > cur]
         sup_candidates = lows[lows < cur]
-        dist_res = (res_candidates.min() - cur) / cur if len(res_candidates) else 0.05
-        dist_sup = (cur - sup_candidates.max()) / cur if len(sup_candidates) else 0.05
+        dist_res = float((res_candidates.min() - cur) / cur) if len(res_candidates) else 0.05
+        dist_sup = float((cur - sup_candidates.max()) / cur) if len(sup_candidates) else 0.05
     else:
         dist_res, dist_sup = 0.05, 0.05
 
@@ -333,7 +333,7 @@ def build_scalar_features(df_1d: pd.DataFrame,
     # ── EMA-20 slope on 1-hour (trend context) ────────────────────────────────
     hist_1h = df_1h.loc[:anchor_time].tail(40)
     if len(hist_1h) >= 22:
-        ema = hist_1h["close"].ewm(span=20, adjust=False).mean().values
+        ema = hist_1h["close"].ewm(span=20, adjust=False).mean().to_numpy(dtype=np.float64)
         # slope = (last EMA − EMA 5 bars ago) / price, normalised
         slope_1h = float(np.clip((ema[-1] - ema[-6]) / (cur + eps), -0.05, 0.05))
     else:
@@ -341,7 +341,7 @@ def build_scalar_features(df_1d: pd.DataFrame,
 
     # ── EMA-20 slope on daily ─────────────────────────────────────────────────
     if len(hist_1d) >= 22:
-        ema_d = hist_1d["close"].ewm(span=20, adjust=False).mean().to_numpy()
+        ema_d = hist_1d["close"].ewm(span=20, adjust=False).mean().to_numpy(dtype=np.float64)
         slope_1d = float(np.clip((ema_d[-1] - ema_d[-6]) / (cur + eps), -0.1, 0.1))
     else:
         slope_1d = 0.0
@@ -350,7 +350,7 @@ def build_scalar_features(df_1d: pd.DataFrame,
     hist_5m = df_5m.loc[:anchor_time].tail(1)
     last_vol = float(hist_5m["volume"].iloc[-1]) if len(hist_5m) else 0.0
     # rolling mean over the last 100 5-min bars
-    vol_history = df_5m.loc[:anchor_time].tail(100)["volume"].mean()
+    vol_history = float(df_5m.loc[:anchor_time].tail(100)["volume"].mean())
     rvol = float(np.clip(last_vol / (vol_history + eps), 0, 10))
 
     return np.array([dist_res, dist_sup, atr_pct, slope_1h, slope_1d, rvol],

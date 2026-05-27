@@ -7,3 +7,4 @@ mplfinance
 tqdm
 pyarrow
 torch
+ipykernel

@@ -39,6 +39,14 @@ data/processed/**/*.npy
 *.pth
 
 
-# --- DATA MANAGEMENT ---
-# We are now using Git LFS for .npy and .json files.
-# Do NOT add them back here, or LFS will stop tracking them.
+# For .dockerignore
+**/processed
+data/
+*.csv
+*.npy
+*.pth
+*.parquet
+venv/
+.venv/
+__pycache__/
+.git/

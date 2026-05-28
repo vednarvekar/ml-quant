@@ -108,70 +108,75 @@ def create_labels(closes, atr_arr):
 # ------------- MAIN -------------
 def process_all_stocks(DATA_DIR: Path, PROCESSED_DIR: Path):
     files = sorted(DATA_DIR.glob('*_ohlcv.json'))
-    print(f"Found {len(files)} stocks to process. Running memory-safe execution...\n")
+    print(f"Found {len(files)} stocks. Counting windows first...\n")
 
-    total_windows_saved = 0
+    # ── Pass 1: count total windows so we can pre-allocate memmap ────────────
+    total_windows = 0
+    for file in files:
+        with open(file, 'r') as f:
+            data = json.load(f)
+        df = pd.DataFrame(data).drop(columns=['timestamp'], errors='ignore').astype(float)
+        features = extract_features(df)
+        total_windows += len(range(WINDOW, len(features) - HORIZON))
+        del data, df, features
+
+    print(f"Total windows to write: {total_windows:,}")
+    N_FEATURES = 12
+
+    # ── Pre-allocate 3 memmap files on disk ───────────────────────────────────
+    # memmap writes directly to disk — zero RAM accumulation
+    X_mm = np.memmap(PROCESSED_DIR / 'X_windows.npy', dtype=np.float32,
+                     mode='w+', shape=(total_windows, WINDOW, N_FEATURES))
+    y_mm = np.memmap(PROCESSED_DIR / 'y_labels.npy',  dtype=np.int64,
+                     mode='w+', shape=(total_windows,))
+    r_mm = np.memmap(PROCESSED_DIR / 'y_returns.npy', dtype=np.float32,
+                     mode='w+', shape=(total_windows,))
+
+    # ── Pass 2: process each stock, write directly into memmap ────────────────
+    cursor = 0
     global_label_counts = Counter()
 
     for file in files:
         stock = file.stem.replace('_ohlcv', '').upper()
-        print(f"Processing stock {stock}...")
+        print(f"Processing {stock}...")
 
-        # 1. Load data for single file
         with open(file, 'r') as f:
             data = json.load(f)
 
-        df = pd.DataFrame(data)
-        df = df.drop(columns=['timestamp'], errors='ignore')
-        df = df.astype(float)
-
-        # 2. Extract calculations
-        features = extract_features(df)
-        closes = df['close'].to_numpy(float)
-        atr_arr = compute_atr(df)
+        df = pd.DataFrame(data).drop(columns=['timestamp'], errors='ignore').astype(float)
+        features  = extract_features(df)
+        closes    = df['close'].to_numpy(float)
+        atr_arr   = compute_atr(df)
         labels, returns = create_labels(closes, atr_arr)
 
-        # Local containers for this stock only
-        X_stock, y_stock, r_stock = [], [], []
+        stock_windows = []
+        stock_labels  = []
+        stock_returns = []
 
-        # 3. Slice windows
         for i in range(WINDOW, len(features) - HORIZON):
-            window = features[i-WINDOW : i]
-            X_stock.append(window)
-            y_stock.append(labels[i-1])
-            r_stock.append(returns[i-1])
+            stock_windows.append(features[i-WINDOW : i])
+            stock_labels.append(labels[i-1])
+            stock_returns.append(returns[i-1])
 
-        # Skip files that don't yield windows
-        if not X_stock:
-            print(f"  Skipped {stock} — insufficient historical records.")
-            continue
+        n = len(stock_labels)
+        X_mm[cursor : cursor+n] = np.asarray(stock_windows, dtype=np.float32)
+        y_mm[cursor : cursor+n] = np.asarray(stock_labels,  dtype=np.int64)
+        r_mm[cursor : cursor+n] = np.asarray(stock_returns, dtype=np.float32)
+        cursor += n
 
-        # 4. Cast to NumPy structures immediately
-        X = np.asarray(X_stock, dtype=np.float32)
-        y = np.asarray(y_stock, dtype=np.int64)
-        r = np.asarray(r_stock, dtype=np.float32)
+        global_label_counts.update(stock_labels)
+        print(f"  Done — {n:,} windows written to disk")
+        del data, df, features, closes, atr_arr, labels, returns
+        del stock_windows, stock_labels, stock_returns
 
-        # 5. Flush directly to disk (clears RAM immediately on loop cycle)
-        np.save(PROCESSED_DIR / f'{stock}_X.npy', X)
-        np.save(PROCESSED_DIR / f'{stock}_y.npy', y)
-        np.save(PROCESSED_DIR / f'{stock}_r.npy', r)
+    # ── Flush memmap to disk ──────────────────────────────────────────────────
+    del X_mm, y_mm, r_mm   # flush + close
 
-        # Metrics Tracking
-        num_windows = len(y)
-        total_windows_saved += num_windows
-        global_label_counts.update(y.tolist())
-
-        print(f"  Done — Generated {num_windows:,} windows ({X.nbytes/1e6:.1f} MB saved to disk)")
-
-        # Explicitly clear variables from scope to free RAM space
-        del data, df, features, closes, atr_arr, labels, returns, X_stock, y_stock, r_stock, X, y, r
-
-    # Summary report
-    print(f"\n All stocks processed safely without memory spikes!")
-    print(f"Total windows stored across dataset: {total_windows_saved:,}")
-    print(f"Global label balance — HOLD: {global_label_counts[0]/total_windows_saved:.1%} | "
-          f"BUY: {global_label_counts[1]/total_windows_saved:.1%} | "
-          f"SELL: {global_label_counts[2]/total_windows_saved:.1%}")
-
-
+    print(f"\n✅ Done. 3 files saved to {PROCESSED_DIR}")
+    print(f"   Total windows : {total_windows:,}")
+    print(f"   X_windows.npy : shape ({total_windows}, {WINDOW}, {N_FEATURES})")
+    print(f"   Labels — HOLD:{global_label_counts[0]/total_windows:.1%} "
+          f"BUY:{global_label_counts[1]/total_windows:.1%} "
+          f"SELL:{global_label_counts[2]/total_windows:.1%}")
+    
 process_all_stocks(DATA_DIR, PROCESSED_DIR)

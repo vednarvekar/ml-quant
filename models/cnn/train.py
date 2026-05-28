@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset  # Switched TensorDataset to base Dataset for disk-mapping
 
-from model import MultiTimeframeCNN
+from models.cnn.model import MultiTimeframeCNN
 
 # ── Updated Path Rules ───────────────────────────────────────────────────────
 # Go 4 levels up to hit your true root directory (~/ml-quant)

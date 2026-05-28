@@ -22,6 +22,7 @@ def list_stocks():
         stocks.add(file_name)
     print(*sorted(stocks), sep=', ')
 
+
 #------------- FEATURE EXTRACTION -------------
 def extract_features(df: pd.DataFrame) -> np.ndarray:
     """
@@ -86,6 +87,22 @@ def extract_features(df: pd.DataFrame) -> np.ndarray:
         engulf_bull, engulf_bear, doji, vol_surge, oi_surge
     ], axis=1).astype(np.float32)                               # (T, 13)
 
+
+# ------------ Average True Range (ATR) -------------
+def compute_atr(df):
+    h, l, c  = df['high'], df['low'], df['close']
+    prev_c   = c.shift(1)
+    tr = pd.concat([h-l, (h-prev_c).abs(), (l-prev_c).abs()], axis=1).max(axis=1)
+    return tr.ewm(span=ATR_PERIOD, adjust=False).mean().to_numpy()
+
+
+# ------------- Creating Lables -------------
+def create_lables(closes, atr_arr):
+    lables, returns = [], []
+    for i in range(len(closes)):
+        p0 = closes[i]
+        atr = atr_arr[i]
+        if p0 <= 0 or atr
 
 def load_data(path: Path):
     for file in DATA_DIR.glob('*_ohlcv.json'):

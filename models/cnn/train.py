@@ -5,6 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 import json
 import os
+from tqdm import tqdm
 
 try:
     from .model import CNNModel
@@ -50,6 +51,8 @@ def macro_f1_score(targets, preds, n_classes: int = 3) -> float:
         denom = (2 * tp) + fp + fn
         f1_values.append(0.0 if denom == 0 else (2 * tp) / denom)
 
+    print(f"  Per-class F1 — HOLD:{f1_values[0]:.3f}  BUY:{f1_values[1]:.3f}  SELL:{f1_values[2]:.3f}")
+
     return float(np.mean(f1_values))
 
 
@@ -92,7 +95,7 @@ class_weights = balanced_class_weights(train_labels, n_classes=3).to(DEVICE)
 # Model setup
 model     = CNNModel(n_features=12, n_classes=3).to(DEVICE)
 criterion = nn.CrossEntropyLoss(weight=class_weights)
-optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-3)
+optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
 
@@ -103,7 +106,7 @@ def evaluate(model, loader, criterion):
     total_loss, all_preds, all_targets = 0.0, [], []
     
     with torch.no_grad():
-        for xb, yb in loader:
+        for xb, yb in tqdm(loader, desc="Evaluating"):
             xb, yb = xb.to(DEVICE), yb.to(DEVICE)
             logits = model(xb)
             total_loss += criterion(logits, yb).item() * len(yb)
@@ -125,7 +128,7 @@ for epoch in range(1, EPOCHS + 1):
     model.train()
     train_loss, all_train_preds, all_train_targets = 0.0, [], []
 
-    for xb, yb in train_loader:
+    for xb, yb in tqdm(train_loader, desc="Training"):
         xb, yb = xb.to(DEVICE), yb.to(DEVICE)
         optimizer.zero_grad()
         
@@ -155,12 +158,12 @@ for epoch in range(1, EPOCHS + 1):
         best_val_f1 = v_f1
         no_improve = 0  # Reset counter
         torch.save(model.state_dict(), MODEL_DIR / 'cnn_5m_best.pt')
-        flag = " ← saved (best validation F1 model state)"
+        flag = " ← saved (best val, F1 model state)"
     else:
         no_improve += 1
-        flag = f" (no validation improvement registered {no_improve}/{PATIENCE})"
+        flag = f" (no validation improvement {no_improve}/{PATIENCE})"
 
-    print(f"Epoch {epoch:02d} | Train Loss: {t_loss:.4f} Acc: {t_acc:.3f} F1: {t_f1:.3f} | "
+    print(f"Epoch {epoch:02d} | Train Loss: {t_loss * 100:.2f} Acc: {t_acc * 100:.2f} F1: {t_f1 * 100:.2f} | "
           f"Val Loss: {v_loss:.4f} Acc: {v_acc:.3f} F1: {v_f1:.3f}{flag}")
 
     # Trigger early stopping step if patience limit is hit

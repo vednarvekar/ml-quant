@@ -27,12 +27,29 @@ class CNNModel(nn.Module):
         
         # 64 channels * 15 remaining downsampled structural steps = 960 features.
         # This architecture runs incredibly fast on CPU and prevents extreme overfitting.
+        # self.classifier = nn.Sequential(
+        #     nn.Flatten(),
+        #     nn.Linear(64 * 15, 64),
+        #     nn.GELU(),
+        #     nn.Dropout(0.4),  # Strong regularizer to block financial noise patterns6
+        #     nn.Linear(64, n_classes),
+        # )
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(64 * 15, 64),
+            nn.Linear(64 * 15, 512),  # wider: 960 → 128 instead of 960 → 64
             nn.GELU(),
-            nn.Dropout(0.4),  # Strong regularizer to block financial noise patterns
-            nn.Linear(64, n_classes),
+            nn.Dropout(0.4),
+            nn.Linear(512, 256),      # extra step down: 512 → 128
+            nn.GELU(),
+            nn.Linear(256, 128), # final: 128 → 3
+            nn.GELU(),
+            nn.Linear(128, 64),
+            nn.GELU(),
+            nn.Linear(64, 32),
+            nn.GELU(),
+            nn.Linear(32, 16),
+            nn.GELU(),
+            nn.Linear(16, n_classes)
         )
 
     def forward(self, x):

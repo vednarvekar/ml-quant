@@ -37,6 +37,7 @@ master_splits*
 data/processed/**/*.npy
 .npy
 *.pth
+*.pt
 
 
 # For .dockerignore

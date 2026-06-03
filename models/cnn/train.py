@@ -1,258 +1,175 @@
-import argparse
-import math
-import time
-from pathlib import Path
-from tqdm import tqdm
-
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset  # Switched TensorDataset to base Dataset for disk-mapping
+from torch.utils.data import Dataset, DataLoader
+from pathlib import Path
+import json
+import os
 
-from models.cnn.model import MultiTimeframeCNN
+try:
+    from .model import CNNModel
+except ImportError:
+    from model import CNNModel
 
-# ── Updated Path Rules ───────────────────────────────────────────────────────
-# Go 4 levels up to hit your true root directory (~/ml-quant)
-BASE_DIR      = Path(__file__).resolve().parent.parent.parent.parent
-MASTER_DIR    = BASE_DIR / "data" / "processed" / "master_splits"
-MODEL_OUTPUT  = BASE_DIR / "models" / "cnn" / "cnn_model.pth"
+# ─── DIRECTORY CONFIGURATION ─────────────────────────────────────────────────
+BASE_DIR      = Path(__file__).resolve().parent.parent.parent
+PROCESSED_DIR = BASE_DIR / 'data' / 'processed' / '5M'
+MODEL_DIR     = BASE_DIR / 'models'
+MODEL_DIR.mkdir(exist_ok=True)
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train CNN on train/val/test split data.")
-    parser.add_argument("--epochs", type=int, default=30)
-    parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument("--lr", type=float, default=5e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--device", default="cpu")
-    parser.add_argument("--early-stop-patience", type=int, default=5)
-    parser.add_argument("--early-stop-min-delta", type=float, default=1e-3)
-    return parser.parse_args()
+# ─── TRAINING HYPERPARAMETERS ────────────────────────────────────────────────
+BATCH_SIZE  = 512       # Large batch size optimize throughput on system CPUs
+EPOCHS      = 30        # Maximum optimization runs allowed
+LR          = 3e-4      # Stable base learning rate for AdamW
+PATIENCE    = 5         # Early Stopping: Stop if validation F1 doesn't rise for 5 epochs
+SEED        = 42
+N_WORKERS   = int(os.getenv('CNN_NUM_WORKERS', '0'))
+DEVICE      = torch.device('cpu') # Explicit CPU setup
+
+torch.manual_seed(SEED)
 
 
-# ── Memory-Mapped Custom Dataset Class ───────────────────────────────────────
-class MappedStockDataset(Dataset):
-    """
-    Custom Dataset that references arrays on your hard drive via memory maps.
-    This prevents pulling all 1.08 million records into system RAM simultaneously.
-    """
-    def __init__(self, prefix):
-        # np.load(..., mmap_mode='r') keeps the file open on disk without allocating data arrays to RAM
-        self.x3m_map = np.load(MASTER_DIR / f"{prefix}_X_3min.npy", mmap_mode='r')
-        self.x5m_map = np.load(MASTER_DIR / f"{prefix}_X_5min.npy", mmap_mode='r')
-        self.x1h_map = np.load(MASTER_DIR / f"{prefix}_X_1hr.npy", mmap_mode='r')
-        self.y_map   = np.load(MASTER_DIR / f"{prefix}_y_labels.npy", mmap_mode='r')
-        self.length  = self.y_map.shape[0]
+def balanced_class_weights(labels: np.ndarray, n_classes: int) -> torch.Tensor:
+    counts = np.bincount(np.asarray(labels), minlength=n_classes)
+    total = counts.sum()
+    weights = np.ones(n_classes, dtype=np.float32)
+    present = counts > 0
+    weights[present] = total / (n_classes * counts[present])
+    return torch.tensor(weights, dtype=torch.float)
+
+
+def macro_f1_score(targets, preds, n_classes: int = 3) -> float:
+    targets = np.asarray(targets)
+    preds = np.asarray(preds)
+    f1_values = []
+
+    for class_id in range(n_classes):
+        tp = np.sum((preds == class_id) & (targets == class_id))
+        fp = np.sum((preds == class_id) & (targets != class_id))
+        fn = np.sum((preds != class_id) & (targets == class_id))
+        denom = (2 * tp) + fp + fn
+        f1_values.append(0.0 if denom == 0 else (2 * tp) / denom)
+
+    return float(np.mean(f1_values))
+
+
+# ─── MEMORY-MAPPED REAL-TIME DATA LOADER ─────────────────────────────────────
+class NativeMemmapDataset(Dataset):
+    """Loads raw binary matrices from disk on demand. Absolute zero RAM profile."""
+    def __init__(self, x_path: Path, y_path: Path, shape: list):
+        # Open disk handles with specific target shapes
+        self.X = np.memmap(x_path, dtype=np.float32, mode='r', shape=tuple(shape))
+        self.y = np.memmap(y_path, dtype=np.int64, mode='r', shape=(shape[0],))
 
     def __len__(self):
-        return self.length
+        return len(self.y)
 
     def __getitem__(self, idx):
-        # Extract only the exact index slice requested by the DataLoader batch window
-        # .copy() drops read-only memory locks to pass clean PyTorch tensors smoothly
-        x3m = torch.from_numpy(self.x3m_map[idx].copy()).float().unsqueeze(0) # Unsqueeze(0) replaces old .unsqueeze(1) for item lookup
-        x5m = torch.from_numpy(self.x5m_map[idx].copy()).float().unsqueeze(0)
-        x1h = torch.from_numpy(self.x1h_map[idx].copy()).float().unsqueeze(0)
-        y   = torch.tensor(self.y_map[idx]).long()
-        
-        return x3m, x5m, x1h, y
+        # Read exactly one lookback window into system RAM
+        x_sample = np.array(self.X[idx], dtype=np.float32)
+        # Permute from (Lookback, Features) to Channel-First format (Features, Lookback)
+        return torch.from_numpy(x_sample).permute(1, 0), torch.tensor(self.y[idx]).long()
+
+# ─── PIPELINE INITIALIZATION ─────────────────────────────────────────────────
+# Load shapes metadata to properly unpack binary structures
+with open(PROCESSED_DIR / 'shapes.json', 'r') as sf:
+    shapes = json.load(sf)
+
+# Initialize Datasets
+train_ds = NativeMemmapDataset(PROCESSED_DIR / 'X_train.npy', PROCESSED_DIR / 'y_train.npy', shapes['train_shape'])
+val_ds   = NativeMemmapDataset(PROCESSED_DIR / 'X_val.npy',   PROCESSED_DIR / 'y_val.npy',   shapes['val_shape'])
+test_ds  = NativeMemmapDataset(PROCESSED_DIR / 'X_test.npy',  PROCESSED_DIR / 'y_test.npy',  shapes['test_shape'])
+
+# Initialize DataLoaders
+train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=N_WORKERS)
+val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False, num_workers=N_WORKERS)
+test_loader  = DataLoader(test_ds,  batch_size=BATCH_SIZE, shuffle=False, num_workers=N_WORKERS)
+
+# Dynamically calculate weights from training subset labels to handle heavy class imbalance
+train_labels = np.memmap(PROCESSED_DIR / 'y_train.npy', dtype=np.int64, mode='r', shape=(shapes['train_shape'][0],))
+class_weights = balanced_class_weights(train_labels, n_classes=3).to(DEVICE)
+
+# Model setup
+model     = CNNModel(n_features=12, n_classes=3).to(DEVICE)
+criterion = nn.CrossEntropyLoss(weight=class_weights)
+optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-3)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
 
-def load_split(prefix):
-    """
-    prefix will be 'TRAIN', 'VAL', or 'TEST'.
-    Make sure your master dataset compilation script saves the combined files 
-    using the exact suffixes below matching your 3min, 5min, and 1hr selections.
-    """
-    # 1. Match 'X_3min' instead of X1 or X3
-    # 2. Match 'X_5min' instead of X5
-    # 3. Match 'X_1hr' instead of XH
-    # 4. Match the labels
-    
-    # Returns our memory-efficient implementation wrapping the targets
-    return MappedStockDataset(prefix)
-
-
-def get_loaders(batch_size):
-    train_dataset = load_split("TRAIN")
-    val_dataset = load_split("VAL")
-    test_dataset = load_split("TEST")
-
-    # num_workers allows asynchronous asynchronous pre-fetching of slices from your disk storage
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=False)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=False)
-
-    return train_loader, val_loader, test_loader, len(train_dataset), len(val_dataset), len(test_dataset)
-
-
-def format_time(seconds):
-    seconds = max(0, int(seconds))
-    hours, rem = divmod(seconds, 3600)
-    minutes, secs = divmod(rem, 60)
-    if hours:
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-    return f"{minutes:02d}:{secs:02d}"
-
-
-def progress_bar(step, total, width=24):
-    filled = math.floor((step / total) * width) if total else width
-    return "[" + "#" * filled + "-" * (width - filled) + "]"
-
-
-def compute_metrics(preds, labels):
-    preds = np.asarray(preds)
-    labels = np.asarray(labels)
-
-    accuracy = float((preds == labels).mean()) if len(labels) else 0.0
-
-    recalls = {}
-    for class_id in [0, 1, 2]:
-        class_mask = labels == class_id
-        total_class = int(class_mask.sum())
-        if total_class == 0:
-            recalls[class_id] = 0.0
-        else:
-            recalls[class_id] = float((preds[class_mask] == class_id).mean())
-
-    balanced_accuracy = (recalls[0] + recalls[1] + recalls[2]) / 3.0
-    return accuracy, balanced_accuracy, recalls
-
-
-def evaluate(model, loader, criterion, device):
+# ─── EVALUATION FUNCTION (MACRO F1 CENTRIC) ──────────────────────────────────
+def evaluate(model, loader, criterion):
+    """Evaluates metrics globally. Focuses on Macro F1 instead of simple accuracy."""
     model.eval()
-    total_loss = 0.0
-    all_preds = []
-    all_labels = []
-
-    with torch.no_grad():
-        for b_x3, b_x5, b_xh, b_y in loader:
-            b_x3 = b_x3.to(device)
-            b_x5 = b_x5.to(device)
-            b_xh = b_xh.to(device)
-            b_y = b_y.to(device)
-
-            outputs = model(b_x3, b_x5, b_xh)
-            loss = criterion(outputs, b_y)
-            total_loss += loss.item()
-
-            preds = torch.argmax(outputs, dim=1)
-            all_preds.extend(preds.cpu().numpy().tolist())
-            all_labels.extend(b_y.cpu().numpy().tolist())
-
-    avg_loss = total_loss / len(loader)
-    accuracy, balanced_accuracy, recalls = compute_metrics(all_preds, all_labels)
-    return avg_loss, accuracy, balanced_accuracy, recalls
-
-
-def main():
-    args = parse_args()
-    device = torch.device(args.device)
-    MODEL_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-
-    train_loader, val_loader, test_loader, train_size, val_size, test_size = get_loaders(args.batch_size)
-
-    model = MultiTimeframeCNN().to(device)
-    criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.0, 10.0, 10.0], device=device))
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min", patience=2, factor=0.5)
-
-    best_val_loss = float("inf")
-    best_epoch = 0
-    no_improve_count = 0
-    total_start = time.time()
-
-    print(f"Starting training on {device} | train={train_size} val={val_size} test={test_size}")
-
-    for epoch in tqdm(range(1, args.epochs + 1)):
-        model.train()
-        epoch_start = time.time()
-        train_loss_sum = 0.0
-        train_correct = 0
-        train_seen = 0
-        total_steps = len(train_loader)
-
-        print(f"\nEpoch {epoch}/{args.epochs}")
-
-        for step, (b_x3, b_x5, b_xh, b_y) in enumerate(train_loader, start=1):
-            b_x3 = b_x3.to(device)
-            b_x5 = b_x5.to(device)
-            b_xh = b_xh.to(device)
-            b_y = b_y.to(device)
-
-            optimizer.zero_grad()
-            outputs = model(b_x3, b_x5, b_xh)
-            loss = criterion(outputs, b_y)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-
-            train_loss_sum += loss.item()
-            preds = torch.argmax(outputs, dim=1)
-            train_correct += (preds == b_y).sum().item()
-            train_seen += b_y.size(0)
-
-            if step == 1 or step % 50 == 0 or step == total_steps:
-                elapsed = time.time() - epoch_start
-                eta = (elapsed / step) * (total_steps - step)
-                avg_train_loss = train_loss_sum / step
-                avg_train_acc = train_correct / train_seen if train_seen else 0.0
-                
-                # Formatted to % by multiplying by 100
-                print(
-                    f"Epoch {epoch}/{args.epochs} | train {progress_bar(step, total_steps)} "
-                    f"{step}/{total_steps} | loss {avg_train_loss * 100:.2f}% | acc {avg_train_acc * 100:.2f}% | "
-                    f"elapsed {format_time(elapsed)} | eta {format_time(eta)}"
-                )
-
-        train_loss = train_loss_sum / len(train_loader)
-        train_acc = train_correct / train_seen if train_seen else 0.0
-
-        print(f"Epoch {epoch}/{args.epochs} | val   {progress_bar(len(val_loader), len(val_loader))} evaluating")
-        val_loss, val_acc, val_bal_acc, val_recalls = evaluate(model, val_loader, criterion, device)
-        scheduler.step(val_loss)
-
-        improved = val_loss < (best_val_loss - args.early_stop_min_delta)
-        if improved:
-            best_val_loss = val_loss
-            best_epoch = epoch
-            no_improve_count = 0
-            torch.save(model.state_dict(), MODEL_OUTPUT)
-            status = "improved"
-        else:
-            no_improve_count += 1
-            status = f"no improve ({no_improve_count}/{args.early_stop_patience})"
-
-        epoch_time = time.time() - epoch_start
-        total_elapsed = time.time() - total_start
-        remaining = epoch_time * (args.epochs - epoch)
-
-        # Multiplied metrics by 100 and changed formatting suffix to :.2f% 
-        print(
-            f"Epoch {epoch}/{args.epochs} | "
-            f"Train Loss: {train_loss * 100:.2f}% | Train Acc: {train_acc * 100:.2f}% | "
-            f"Val Loss: {val_loss * 100:.2f}% | Val Acc: {val_acc * 100:.2f}% | Val Bal Acc: {val_bal_acc * 100:.2f}% | "
-            f"Recall N/B/S: {val_recalls[0] * 100:.2f}%/{val_recalls[1] * 100:.2f}%/{val_recalls[2] * 100:.2f}% | "
-            f"Best Val Loss: {best_val_loss * 100:.2f}% @ epoch {best_epoch} | "
-            f"status: {status} | LR: {optimizer.param_groups[0]['lr']:.6f} | "
-            f"epoch time {format_time(epoch_time)} | total {format_time(total_elapsed)} | "
-            f"remaining {format_time(remaining)}"
-        )
-
-        if no_improve_count >= args.early_stop_patience:
-            print(f"Early stopping triggered at epoch {epoch}. Best validation loss was {best_val_loss * 100:.2f}% at epoch {best_epoch}.")
-            break
-
-    model.load_state_dict(torch.load(MODEL_OUTPUT, map_location=device))
-    print(f"\nBest Model Test {progress_bar(len(test_loader), len(test_loader))} evaluating")
-    test_loss, test_acc, test_bal_acc, test_recalls = evaluate(model, test_loader, criterion, device)
+    total_loss, all_preds, all_targets = 0.0, [], []
     
-    # Updated final test evaluation print
-    print(
-        f"Test Loss: {test_loss * 100:.2f}% | Test Acc: {test_acc * 100:.2f}% | Test Bal Acc: {test_bal_acc * 100:.2f}% | "
-        f"Recall N/B/S: {test_recalls[0] * 100:.2f}%/{test_recalls[1] * 100:.2f}%/{test_recalls[2] * 100:.2f}%"
-    )
-    print(f"Best model saved to {MODEL_OUTPUT}")
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb, yb = xb.to(DEVICE), yb.to(DEVICE)
+            logits = model(xb)
+            total_loss += criterion(logits, yb).item() * len(yb)
+            all_preds.extend(logits.argmax(dim=1).cpu().numpy())
+            all_targets.extend(yb.cpu().numpy())
+            
+    avg_loss = total_loss / len(all_targets)
+    acc = (np.array(all_preds) == np.array(all_targets)).mean()
+    macro_f1 = macro_f1_score(all_targets, all_preds)
+    return avg_loss, acc, macro_f1
 
 
-if __name__ == "__main__":
-    main()
+# ─── ENGINE RUN TIME TRAINING LOOP ───────────────────────────────────────────
+print("Starting optimization engine across cross-sectional profiles...\n")
+best_val_f1 = -1.0
+no_improve = 0  # Counter for Early Stopping tracking
+
+for epoch in range(1, EPOCHS + 1):
+    model.train()
+    train_loss, all_train_preds, all_train_targets = 0.0, [], []
+
+    for xb, yb in train_loader:
+        xb, yb = xb.to(DEVICE), yb.to(DEVICE)
+        optimizer.zero_grad()
+        
+        logits = model(xb)
+        loss   = criterion(logits, yb)
+        loss.backward()
+        
+        # Hard gradient clipping prevents explosive landscape spikes common in financial series
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        train_loss += loss.item() * len(yb)
+        all_train_preds.extend(logits.argmax(dim=1).cpu().numpy())
+        all_train_targets.extend(yb.cpu().numpy())
+
+    scheduler.step()
+    
+    # Calculate performance metrics
+    t_loss = train_loss / len(all_train_targets)
+    t_acc = (np.array(all_train_preds) == np.array(all_train_targets)).mean()
+    t_f1 = macro_f1_score(all_train_targets, all_train_preds)
+    
+    v_loss, v_acc, v_f1 = evaluate(model, val_loader, criterion)
+
+    # Performance checkpoint / early stopping logic
+    if v_f1 > best_val_f1:
+        best_val_f1 = v_f1
+        no_improve = 0  # Reset counter
+        torch.save(model.state_dict(), MODEL_DIR / 'cnn_5m_best.pt')
+        flag = " ← saved (best validation F1 model state)"
+    else:
+        no_improve += 1
+        flag = f" (no validation improvement registered {no_improve}/{PATIENCE})"
+
+    print(f"Epoch {epoch:02d} | Train Loss: {t_loss:.4f} Acc: {t_acc:.3f} F1: {t_f1:.3f} | "
+          f"Val Loss: {v_loss:.4f} Acc: {v_acc:.3f} F1: {v_f1:.3f}{flag}")
+
+    # Trigger early stopping step if patience limit is hit
+    if no_improve >= PATIENCE:
+        print(f"\n[System Alert] Early stopping criteria matched at Epoch {epoch}. Training cut short.")
+        break
+
+# Final Verification Evaluation on Unseen Test Dataset Segment
+model.load_state_dict(torch.load(MODEL_DIR / 'cnn_5m_best.pt'))
+test_loss, test_acc, test_f1 = evaluate(model, test_loader, criterion)
+print(f"\n🚀 Pipeline complete. Unseen Cross-Sectional Test Performance:\n"
+      f"   Loss: {test_loss:.4f} | Accuracy: {test_acc:.3f} | Macro-F1 Score: {test_f1:.3f}")

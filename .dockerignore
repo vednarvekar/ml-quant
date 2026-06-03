@@ -39,6 +39,7 @@ data/
 *.csv
 *.npy
 *.pth
+*.pt
 *.parquet
 venv/
 .venv/

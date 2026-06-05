@@ -7,10 +7,7 @@ import json
 import os
 from tqdm import tqdm
 
-try:
-    from .model import CNNModel
-except ImportError:
-    from model import CNNModel
+from model import CNNModel
 
 # ─── DIRECTORY CONFIGURATION ─────────────────────────────────────────────────
 BASE_DIR      = Path(__file__).resolve().parent.parent.parent
@@ -19,11 +16,11 @@ MODEL_DIR     = BASE_DIR / 'models'
 MODEL_DIR.mkdir(exist_ok=True)
 
 # ─── TRAINING HYPERPARAMETERS ────────────────────────────────────────────────
-BATCH_SIZE  = 512       # Large batch size optimize throughput on system CPUs
-EPOCHS      = 30        # Maximum optimization runs allowed
-LR          = 3e-4      # Stable base learning rate for AdamW
-PATIENCE    = 5         # Early Stopping: Stop if validation F1 doesn't rise for 5 epochs
-SEED        = 42
+BATCH_SIZE  = 512       
+EPOCHS      = 30        
+LR          = 3e-4      # learning rate for AdamW
+PATIENCE    = 7       
+SEED        = 44
 N_WORKERS   = int(os.getenv('CNN_NUM_WORKERS', '0'))
 DEVICE      = torch.device('cpu') # Explicit CPU setup
 
@@ -94,13 +91,20 @@ class_weights = balanced_class_weights(train_labels, n_classes=3).to(DEVICE)
 
 # Model setup
 model     = CNNModel(n_features=12, n_classes=3).to(DEVICE)
-criterion = nn.CrossEntropyLoss(weight=class_weights)
+cost_function = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)  # Label smoothing to mitigate noisy financial labels
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+# Replace your CosineAnnealingLR with this:
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optimizer, 
+    max_lr=LR,
+    steps_per_epoch=len(train_loader), 
+    epochs=EPOCHS,
+    pct_start=0.2  # Spend the first 20% of training warming up smoothly
+)
 
 
 # ─── EVALUATION FUNCTION (MACRO F1 CENTRIC) ──────────────────────────────────
-def evaluate(model, loader, criterion):
+def evaluate(model, loader, cost_function):
     """Evaluates metrics globally. Focuses on Macro F1 instead of simple accuracy."""
     model.eval()
     total_loss, all_preds, all_targets = 0.0, [], []
@@ -109,7 +113,8 @@ def evaluate(model, loader, criterion):
         for xb, yb in tqdm(loader, desc="Evaluating"):
             xb, yb = xb.to(DEVICE), yb.to(DEVICE)
             logits = model(xb)
-            total_loss += criterion(logits, yb).item() * len(yb)
+            
+            total_loss += cost_function(logits, yb).item() * len(yb)
             all_preds.extend(logits.argmax(dim=1).cpu().numpy())
             all_targets.extend(yb.cpu().numpy())
             
@@ -133,25 +138,25 @@ for epoch in range(1, EPOCHS + 1):
         optimizer.zero_grad()
         
         logits = model(xb)
-        loss   = criterion(logits, yb)
+        loss   = cost_function(logits, yb)
         loss.backward()
         
         # Hard gradient clipping prevents explosive landscape spikes common in financial series
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
+        scheduler.step()
 
-        train_loss += loss.item() * len(yb)
+        train_loss += loss.item()
         all_train_preds.extend(logits.argmax(dim=1).cpu().numpy())
         all_train_targets.extend(yb.cpu().numpy())
 
-    scheduler.step()
     
     # Calculate performance metrics
-    t_loss = train_loss / len(all_train_targets)
+    t_loss = train_loss / len(train_loader)
     t_acc = (np.array(all_train_preds) == np.array(all_train_targets)).mean()
     t_f1 = macro_f1_score(all_train_targets, all_train_preds)
     
-    v_loss, v_acc, v_f1 = evaluate(model, val_loader, criterion)
+    v_loss, v_acc, v_f1 = evaluate(model, val_loader, cost_function)
 
     # Performance checkpoint / early stopping logic
     if v_f1 > best_val_f1:
@@ -163,8 +168,9 @@ for epoch in range(1, EPOCHS + 1):
         no_improve += 1
         flag = f" (no validation improvement {no_improve}/{PATIENCE})"
 
-    print(f"Epoch {epoch:02d} | Train Loss: {t_loss * 100:.2f} Acc: {t_acc * 100:.2f} F1: {t_f1 * 100:.2f} | "
-          f"Val Loss: {v_loss:.4f} Acc: {v_acc:.3f} F1: {v_f1:.3f}{flag}")
+    print(f"Epoch {epoch:02d} | Train Loss: {t_loss:.4f} Acc: {t_acc * 100:.2f} F1: {t_f1 * 100:.2f} | "
+          f"Val Loss: {v_loss:.4f} Acc: {v_acc * 100:.2f} F1: {v_f1 * 100:.2f}{flag}")
+    print() 
 
     # Trigger early stopping step if patience limit is hit
     if no_improve >= PATIENCE:
@@ -173,6 +179,6 @@ for epoch in range(1, EPOCHS + 1):
 
 # Final Verification Evaluation on Unseen Test Dataset Segment
 model.load_state_dict(torch.load(MODEL_DIR / 'cnn_5m_best.pt'))
-test_loss, test_acc, test_f1 = evaluate(model, test_loader, criterion)
+test_loss, test_acc, test_f1 = evaluate(model, test_loader, cost_function)
 print(f"\n🚀 Pipeline complete. Unseen Cross-Sectional Test Performance:\n"
-      f"   Loss: {test_loss:.4f} | Accuracy: {test_acc:.3f} | Macro-F1 Score: {test_f1:.3f}")
+      f"   Loss: {test_loss * 100:.2f} | Accuracy: {test_acc * 100:.2f} | Macro-F1 Score: {test_f1 * 100:.2f}")

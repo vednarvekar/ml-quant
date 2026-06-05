@@ -36,20 +36,10 @@ class CNNModel(nn.Module):
         # )
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(64 * 15, 512),  # wider: 960 → 128 instead of 960 → 64
+            nn.Linear(64 * 15, 128),
             nn.GELU(),
-            nn.Dropout(0.4),
-            nn.Linear(512, 256),      # extra step down: 512 → 128
-            nn.GELU(),
-            nn.Linear(256, 128), # final: 128 → 3
-            nn.GELU(),
-            nn.Linear(128, 64),
-            nn.GELU(),
-            nn.Linear(64, 32),
-            nn.GELU(),
-            nn.Linear(32, 16),
-            nn.GELU(),
-            nn.Linear(16, n_classes)
+            nn.Dropout(0.3),      # reduced from 0.4
+            nn.Linear(128, n_classes),
         )
 
     def forward(self, x):

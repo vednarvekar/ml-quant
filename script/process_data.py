@@ -40,7 +40,8 @@ def extract_features(df: pd.DataFrame) -> np.ndarray:
     open_ret = (o - prev_c) / (prev_c + eps)
     high_ret = (h - prev_c) / (prev_c + eps)
     low_ret  = (l - prev_c) / (prev_c + eps)
-    vol_ret  = (v - prev_v) / (prev_v + eps)
+    vol_ret = (v - prev_v) / (prev_v + eps)
+    vol_ret = np.clip(vol_ret, -10, 10)  
 
     # 2. Candlestick Structure Properties
     hl = np.where((h - l) < eps, eps, h - l)

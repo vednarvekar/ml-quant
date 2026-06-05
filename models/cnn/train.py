@@ -106,7 +106,9 @@ def class_weights(labels):
 def feature_stats(x_path, shape):
     X = np.memmap(x_path, dtype=np.float32, mode="r", shape=tuple(shape))
     sample_size = min(STATS_SAMPLE_WINDOWS, shape[0])
-    sample = np.asarray(X[:sample_size]).reshape(-1, shape[2])
+    rng = np.random.default_rng(44)
+    sample_indices = rng.choice(shape[0], size=sample_size, replace=False)
+    sample = np.asarray(X[sample_indices]).reshape(-1, shape[2])
     mean = sample.mean(axis=0).astype(np.float32)
     std = sample.std(axis=0).astype(np.float32)
     std = np.where(std < 1e-6, 1.0, std).astype(np.float32)

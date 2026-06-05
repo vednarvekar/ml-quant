@@ -16,13 +16,15 @@ class CNNModel(nn.Module):
             nn.Conv1d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm1d(64),
             nn.GELU(),
-            nn.MaxPool1d(2),         
+            nn.MaxPool1d(2),
+            # nn.Dropout1d(0.2),       
             
             # Conv block 3 + pooling (Compresses lookback length: 30 -> 15)
             nn.Conv1d(64, 64, kernel_size=3, padding=1),
             nn.BatchNorm1d(64),
             nn.GELU(),
-            nn.MaxPool1d(2),         
+            nn.MaxPool1d(2),
+            # nn.Dropout1d(0.3),         
         )
         
         # 64 channels * 15 remaining downsampled structural steps = 960 features.
@@ -38,7 +40,7 @@ class CNNModel(nn.Module):
             nn.Flatten(),
             nn.Linear(64 * 15, 128),
             nn.GELU(),
-            nn.Dropout(0.3),      # reduced from 0.4
+            # nn.Dropout(0.3),      # reduced from 0.4
             nn.Linear(128, n_classes),
         )
 

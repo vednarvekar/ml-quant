@@ -9,32 +9,20 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const SYMBOLS = {
-  // INDEXES
-  nifty50: "NSE_INDEX|Nifty 50",
-  bankNifty: "NSE_INDEX|Nifty Bank",
-  finnifty: "NSE_INDEX|Nifty Fin Service",
-
   // STABLE LARGE CAPS
-  // reliance: "NSE_EQ|INE002A01018",
-  // hdfcBank: "NSE_EQ|INE040A01034",
-  // tcs: "NSE_EQ|INE467B01029",
-  // infosys: "NSE_EQ|INE009A01021",
-  // hul: "NSE_EQ|INE030A01027",
-  // asianPaints: "NSE_EQ|INE021A01026",
+  reliance: "NSE_EQ|INE002A01018",
+  hdfcBank: "NSE_EQ|INE040A01034",
+  tcs: "NSE_EQ|INE467B01029",
+  infosys: "NSE_EQ|INE009A01021",
+  hul: "NSE_EQ|INE030A01027",
+  asianPaints: "NSE_EQ|INE021A01026",
 
   // // MOMENTUM / TRENDING
-  // tataMotors: "NSE_EQ|INE155A01022",
-  // hal: "NSE_EQ|INE066F01020",
-  // bel: "NSE_EQ|INE263A01024",
-  // adaniPorts: "NSE_EQ|INE742F01042",
-  // jioFinancial: "NSE_EQ|INE758E01017",
-
-  // VOLATILE / HIGH BETA
-  // suzlon: "NSE_EQ|INE040H01021",
-  // rvnl: "NSE_EQ|INE415G01027",
-  // ireda: "NSE_EQ|INE202E01016",
-  // yesBank: "NSE_EQ|INE528G01035",
-  // vodafoneIdea: "NSE_EQ|INE669E01016",
+  tataMotors: "NSE_EQ|INE155A01022",
+  hal: "NSE_EQ|INE066F01020",
+  bel: "NSE_EQ|INE263A01024",
+  adaniPorts: "NSE_EQ|INE742F01042",
+  jioFinancial: "NSE_EQ|INE758E01017",
 };
 
 const __filename = fileURLToPath(import.meta.url);

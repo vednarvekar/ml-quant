@@ -23,6 +23,29 @@ const SYMBOLS = {
   bel: "NSE_EQ|INE263A01024",
   adaniPorts: "NSE_EQ|INE742F01042",
   jioFinancial: "NSE_EQ|INE758E01017",
+
+  iciciBank: "NSE_EQ|INE090A01021",      // Price ~₹1,260
+  bhartiAirtel: "NSE_EQ|INE397D01024",   // Price ~₹1,800
+  axisBank: "NSE_EQ|INE238A01034",       // Price ~₹1,270
+  sunPharma: "NSE_EQ|INE044A01036",      // Price ~₹1,780
+  titan: "NSE_EQ|INE280A01028",          // Price ~₹4,260
+
+  stateBankOfIndia: "NSE_EQ|INE062A01020", // Price ~₹970
+  larsenAndToubro: "NSE_EQ|INE018A01030",  // Price ~₹3,950
+  adaniEnterprises: "NSE_EQ|INE423A01024", // Price ~₹3,040
+  mahindraAndMahindra: "NSE_EQ|INE101A01026", // Price ~₹3,040
+  bajajFinance: "NSE_EQ|INE296A01024",     // Price ~₹890
+
+  kotakBank: "NSE_EQ|INE237A01028",
+  itc: "NSE_EQ|INE154A01025",
+  grasim: "NSE_EQ|INE047A01021",
+  hindalco: "NSE_EQ|INE038A01020",
+  techMahindra: "NSE_EQ|INE669C01036",
+  ntpc: "NSE_EQ|INE733E01010",
+  powerGrid: "NSE_EQ|INE752E01010",
+  cholamandalam: "NSE_EQ|INE121A01024",
+  jswSteel: "NSE_EQ|INE019A01030",
+  dlf: "NSE_EQ|INE271C01023",
 };
 
 const __filename = fileURLToPath(import.meta.url);

@@ -10,19 +10,19 @@ dotenv.config();
 
 const SYMBOLS = {
   // STABLE LARGE CAPS
-  reliance: "NSE_EQ|INE002A01018",
-  hdfcBank: "NSE_EQ|INE040A01034",
-  tcs: "NSE_EQ|INE467B01029",
-  infosys: "NSE_EQ|INE009A01021",
-  hul: "NSE_EQ|INE030A01027",
-  asianPaints: "NSE_EQ|INE021A01026",
+  // reliance: "NSE_EQ|INE002A01018",
+  // hdfcBank: "NSE_EQ|INE040A01034",
+  // tcs: "NSE_EQ|INE467B01029",
+  // infosys: "NSE_EQ|INE009A01021",
+  // hul: "NSE_EQ|INE030A01027",
+  // asianPaints: "NSE_EQ|INE021A01026",
 
-  // // MOMENTUM / TRENDING
-  tataMotors: "NSE_EQ|INE155A01022",
-  hal: "NSE_EQ|INE066F01020",
-  bel: "NSE_EQ|INE263A01024",
-  adaniPorts: "NSE_EQ|INE742F01042",
-  jioFinancial: "NSE_EQ|INE758E01017",
+  // // // MOMENTUM / TRENDING
+  // tataMotors: "NSE_EQ|INE155A01022",
+  // hal: "NSE_EQ|INE066F01020",
+  // bel: "NSE_EQ|INE263A01024",
+  // adaniPorts: "NSE_EQ|INE742F01042",
+  // jioFinancial: "NSE_EQ|INE758E01017",
 
   iciciBank: "NSE_EQ|INE090A01021",      // Price ~₹1,260
   bhartiAirtel: "NSE_EQ|INE397D01024",   // Price ~₹1,800
@@ -60,7 +60,7 @@ async function downloadOHLCVData() {
     // const symbolName = "jioFinancial";
     const instrumentKey = encodeURIComponent(instrumentValue);
     // const instrumentKey = SYMBOLS.jioFinancial;
-    const data_path = path.join(BASE_DIR, "data", "raw", "1H", `${symbolName}_ohlcv.json`);
+    const data_path = path.join(BASE_DIR, "data", "raw", "5M", `${symbolName}_ohlcv.json`);
 
     // Ensure the directory exists
     const dir = path.dirname(data_path);
@@ -91,7 +91,7 @@ async function downloadOHLCVData() {
       const toDate = endOfMonth > now ? now : endOfMonth;
       const toDateStr = toDate.toISOString().split("T")[0];
 
-      const url = `https://api.upstox.com/v3/historical-candle/${instrumentKey}/hours/1/${toDateStr}/${fromDateStr}`;
+      const url = `https://api.upstox.com/v3/historical-candle/${instrumentKey}/minutes/5/${toDateStr}/${fromDateStr}`;
 
       try {
         await new Promise((resolve) => setTimeout(resolve, 100));

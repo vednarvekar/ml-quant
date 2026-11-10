@@ -70,3 +70,26 @@ Read-out: the model has real skill (IC), the long-only version already edges the
 3. Add sector-index, participant-OI, USDINR/Brent/Nasdaq (lagged) features; try ranking-loss objective (LambdaRank) and an ensemble of LightGBM + linear.
 4. Market-regime gating from VIX / Nifty trend for exposure.
 5. Intraday: only trade the highest-conviction 1 stock/day, test limit-order fills.
+
+## Phase 4, round 2: cutting turnover, horizons, futures (2026-11-10)
+Predictions are saved per label horizon (`ml_swing_pred_h{5,10,20}.npy`); `mlq.swing_portfolio` tries 24 portfolio constructions (slower rebalance, rank hysteresis, score smoothing, partial rebalancing, trend gating) in both windows. All 48 runs are in the registry. 2022+ clean window, long-only delivery, 5 bps slippage:
+
+| Variant | CAGR | Sharpe | Max DD | Turnover/yr | Fees (Rs) |
+|---|---|---|---|---|---|
+| Weekly top-20 (reference) | 18.0% | 0.90 | -28% | 59x | 7.8 lakh |
+| Weekly + keep-while-rank<40 (hysteresis) | 19.5% | 0.98 | -25% | 35x | 5.6 lakh |
+| Hysteresis + trend gate | 16.4% | 1.00 | -26% | 32x | 4.9 lakh |
+| Rebalance every 20 days, top-20 | 19.3% | 0.95 | -20% | 19x | 4.0 lakh |
+| (EW top-100 baseline / Nifty 50) | 10% / 7.6% | 0.64 / 0.60 | -23% / -16% | | |
+
+**Honesty check:** the *same* weekly strategy scored Sharpe 0.73 in round 1 and 0.90 here, only because rebalances started on a different weekday. So Sharpe differences below ~0.15 between variants are noise, and DSR stays ~0.55 (not significant) after ~150 logged trials. What *is* consistent: every ML variant beats the equal-weight and index baselines in the 2022+ window, and longer horizons / slower rebalancing / hysteresis reduce cost without hurting.
+
+**Biggest cost lever = STT.** Delivery STT is 0.1% each side (about 20 bps round trip). Same portfolios priced as stock futures (STT 0.05% sell only), F&O names only:
+
+| Variant (2022+, 5 bps slippage) | Delivery Sharpe / fees | Futures Sharpe / fees |
+|---|---|---|
+| Weekly top-20 | 0.90 / 7.8 lakh | **1.36** / 2.8 lakh |
+| Weekly hysteresis | 0.98 / 5.6 lakh | **1.31** / 1.7 lakh |
+| 20-day top-20 | 0.95 / 4.0 lakh | **1.15** / 0.9 lakh |
+
+Caveats before believing this: lot sizes are not enforced (holding 20 names needs roughly Rs 1 crore notional, ~Rs 20 lakh margin), no futures roll/basis cost, only today's F&O list, one 4.8-year window. Next: lot-aware sizing with a capital parameter, then paper trading of the best candidate.

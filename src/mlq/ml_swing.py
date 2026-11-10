@@ -20,7 +20,9 @@ from mlq.config import DATA
 from mlq.swing import make_ctx, week_end_idx
 from mlq.validation import purged_walk_forward
 
-HOLD = 5          # label: open[t+1] -> open[t+1+HOLD]
+import os
+
+HOLD = int(os.environ.get("MLQ_HOLD", "5"))   # label: open[t+1] -> open[t+1+HOLD]
 UNI = 150         # point-in-time liquidity universe size
 
 
@@ -121,6 +123,7 @@ def main():
         Xt = X[te]
         P[sel] = mdl.predict(Xt[sel])
         pred[te] = P
+    np.save(DATA / "clean" / f"ml_swing_pred_h{HOLD}.npy", pred)
     imp = dict(zip(names, mdl.feature_importances_))
     print("top features:", sorted(imp, key=imp.get, reverse=True)[:8], flush=True)
 
@@ -167,7 +170,7 @@ def main():
                              "turn/yr": round(m["turnover_per_year"], 1), "fees_k": round(m["fees"] / 1e3),
                              "dsr": round(registry.dsr(dly, "swing-ml"), 2)})
     out = pl.DataFrame(rows)
-    out.write_csv(DATA / "clean" / "ml_swing_results.csv")
+    out.write_csv(DATA / "clean" / f"ml_swing_results_h{HOLD}.csv")
     with pl.Config(tbl_rows=30, tbl_width_chars=150):
         print(out)
 

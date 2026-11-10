@@ -93,3 +93,23 @@ Predictions are saved per label horizon (`ml_swing_pred_h{5,10,20}.npy`); `mlq.s
 | 20-day top-20 | 0.95 / 4.0 lakh | **1.15** / 0.9 lakh |
 
 Caveats before believing this: lot sizes are not enforced (holding 20 names needs roughly Rs 1 crore notional, ~Rs 20 lakh margin), no futures roll/basis cost, only today's F&O list, one 4.8-year window. Next: lot-aware sizing with a capital parameter, then paper trading of the best candidate.
+
+## Phase 4, round 3: lot-aware futures (`mlq.futures_bt`, `mlq.futures_run`)
+Whole lots (today's lot sizes), real capital, 20% margin cap, monthly roll round-trip cost, 5 bps slippage, F&O names only, ML h5 predictions, 2022+ window. `exposure` = notional / equity.
+
+| Strategy | Capital | Exposure | CAGR | Sharpe | Max DD | Avg names held |
+|---|---|---|---|---|---|---|
+| top-5 weekly | Rs 10L | 1x | 34% | 1.10 | -36% | 4.1 |
+| top-10 weekly hysteresis | Rs 20L | 1x | 32% | 1.24 | -28% | 7.9 |
+| top-10 weekly hysteresis | Rs 50L | 1x | 23% | 1.03 | -26% | 9.8 |
+| top-20 weekly hysteresis | Rs 50L | 1x | 23% | 1.01 | -29% | 18.0 |
+| top-20 weekly hysteresis | Rs 1 crore | 1x | 22% | 1.06 | -22% | 19.7 |
+| top-20, 20-day rebalance | Rs 1 crore | 1x | 22% | 1.08 | -24% | 19.8 |
+| any of the above | any | 2x | 40-70% | 1.0-1.4 | **-43% to -59%** | |
+
+Read-out:
+- **Lot sizes decide the minimum account:** below ~Rs 20 lakh a 20-name portfolio holds 0-1 names (one lot is Rs 3-10 lakh). Roughly: Rs 10L -> 5 names (concentrated, DD -36%); Rs 20L -> 10 names; Rs 50L+ -> 20 names.
+- The edge survives lots, margin and roll: Sharpe ~1.0-1.2 and 22-32% CAGR at 1x across account sizes where it can actually hold positions. Fees are 8-20% of capital over 4.8 years, and slippage is a separate cost on top.
+- 2x leverage doubles return **and** drawdown (about -45%); not recommended before paper trading proves the live edge.
+- Still unproven: DSR below 0.95 after ~200 trials, one 4.8-year window, today's lot sizes used for history, no futures basis modelled, ML trained on a 150-name liquidity universe.
+- A bug found and fixed along the way: non-F&O names had a missing lot size, which silently disabled the margin cap (test added).

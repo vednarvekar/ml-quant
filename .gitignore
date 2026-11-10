@@ -6,3 +6,6 @@ __pycache__/
 data/
 *.parquet
 .pytest_cache/
+
+.uvpython/
+.venv-sched/

@@ -1,53 +1,8 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log
-
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-# Ignore the main environment file
-.env
-.venv
-venv/
-
-# Ignore environment file variants
-.env.local
-.env.*.local
-
-# Ignore processed data arrays (too large for LFS quota)
-master_splits*
-data/processed/**/*.npy
-.npy
-*.pth
-*.pt
-
-
-# For .dockerignore
-**/processed
-data/
-*.csv
-*.npy
-*.pth
-*.parquet
-venv/
 .venv/
 __pycache__/
-.git/
+*.pyc
+.env
+.secrets/
+data/
+*.parquet
+.pytest_cache/

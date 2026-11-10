@@ -1,0 +1,72 @@
+# 17 - Phase 2 + 3 results: harness gate and baseline leaderboard (2026-11-10)
+
+Everything below is reproducible: `python -m mlq.rebuild`, `python -m mlq.swing`, `python -m mlq.intraday_strats`. All runs are logged in `data/experiments.jsonl` (the registry), so Deflated Sharpe counts every try.
+
+## Phase 2 gate: PASSED (daily + 5-minute engines)
+| Requirement | Evidence |
+|---|---|
+| Null test (random strategy ~ -costs) | `test_backtest`, `test_intraday`: random signals lose money, Sharpe < 0.5 |
+| No-lookahead test | legit signal earns ~nothing, a peeking signal earns a lot on both engines (proves leaks would show) |
+| Known-answer / execution timing | trap-price tests: fills happen at the NEXT bar/day open; intraday is flat by 15:15 |
+| Reproducible | deterministic tests; one-command rebuild; registry log |
+| Costs | `costs.py`: delivery / intraday / futures, slippage on every fill |
+| Validation tools | purged walk-forward, CPCV, Deflated Sharpe (`validation.py`), experiment registry (`registry.py`) |
+| F&O facts | `futures.py`: 218 F&O stocks (96 of Nifty 100), current lot sizes (e.g. RELIANCE 500 = ~Rs 7 lakh/lot, SBIN 750, TCS 225), 20% margin placeholder |
+Still approximate: lot sizes are today's (history not available), margin is a flat 20%, circuit limits not modelled, MIS square-off assumed 15:15.
+
+## Phase 3: swing leaderboard (daily engine, monthly rebalance, costs + 5 bps slippage)
+Clean window = 2022-01 -> 2026-11 (point-in-time universe, 96% coverage). Long window = 2012-2021 (only 78% of the true top-100 had data -> **survivor-biased, optimistic**).
+
+| Strategy | Clean CAGR | Clean Sharpe | Clean DD | Long Sharpe (biased) |
+|---|---|---|---|---|
+| EW top-100 | 10.0% | 0.64 | -23% | 0.77 |
+| Trend200 + EW | 7.7% | 0.61 | -17% | 0.43 |
+| Momentum 12-1, top 20 | 12.0% | 0.57 | -37% | 0.88 |
+| Momentum + hysteresis (keep 40) | 8.7% | 0.46 | -41% | 0.99 |
+| Low-vol 60d, 20 names | 6.5% | 0.57 | -19% | 0.99 |
+| Weekly 5-day reversal | 0.9% | 0.16 | -43% | 0.23 |
+| Combo mom+lowvol+trend | 9.0% | 0.66 | -19% | 0.87 |
+| **Long/short momentum, F&O futures** | 7.5% | **0.71** | **-17%** | 0.39 |
+| (Nifty 50 buy & hold, no costs) | 7.6% | 0.60 | -16% | - |
+
+Read-out:
+- Factor baselines give Sharpe ~0.5-0.7 net of costs. **None is statistically convincing** (DSR 0.5-0.7 on the clean window; need > 0.95). Four years is too short to tell.
+- Weekly reversal dies on costs (93x turnover). Cost-aware design matters more than the signal.
+- Market-neutral long/short (futures) has the best clean-window risk profile with tiny fees, but its long window is weak (0.39): regime-dependent. Lot sizes make it capital-hungry (one RELIANCE lot ~ Rs 7 lakh notional).
+- The old "survivor" test shows the bias: with 78% coverage the same strategies look 20-40% better.
+
+## Phase 3: intraday leaderboard (5-min engine, 40 liquid names, 2022-2026, MIS, K=5 positions)
+Rules: opening-range breakout, gap fade, 30-min momentum, VWAP fade (14 variants). At 5 bps slippage per fill **every variant loses money** (net -7 to -21 bps per trade; Sharpe -0.7 to -7.6). Anchored walk-forward "pick the best past variant" gives OOS Sharpe -1.0, DSR 0.0.
+
+But gross edge exists before costs (+6 to +9 bps/trade, mom30 and gap fade; VWAP fade is negative, VWAP *follow* is the mirror image). Sensitivity (`data/clean/intraday_sensitivity.csv`):
+- Fewer, higher-conviction trades earn more per trade: gap fade (>1%) gross 16 bps at K=1 vs 8 bps at K=5; mom30 12.6 vs 8.8.
+- Best simple case (gap fade >1%, 1 position, 2 bps slippage): net +8 bps/trade, Sharpe 0.43. At 5 bps slippage it is ~0.
+- Fees alone are ~6 bps round trip, slippage 2 x slip. Break-even needs either gross > ~16 bps or passive/limit fills (<= 1-2 bps slippage).
+
+## What this means for Phase 4 (the plan we derive)
+1. **Intraday:** simple rules are not enough, but conviction matters, so a model that *ranks* trades (to lift gross per trade from ~8 to > 20 bps) is the right ML target. Features: gap, first-30-min return/volume, VWAP distance, VIX level/change, index return, sector index move, time of day, participant OI. Also test limit-order entry to cut slippage.
+2. **Swing:** cross-sectional ranking models (LightGBM) on momentum/low-vol/reversal/volume/VIX features, long/short via futures for F&O names; hold 5-20 days, trade rarely; must beat Sharpe ~0.7 net.
+3. **Risk/regime:** VIX- and index-trend-based exposure scaling (Trend200 cut drawdown from -23% to -17%).
+4. Anything promoted must also survive: CPCV paths >= 70% positive, DSR > 0.95 after counting every logged trial, cost x2 and delay +1 bar.
+
+## Phase 4, first ML experiments (2026-11-10, same harness, all trials logged)
+**1. Intraday trade-ranking (`mlq.ml_intraday`, LightGBM, 80 liquid names, walk-forward every 63 days).** Features known at 09:45 (gap, first-30-min return/range/volume, previous-day returns, VIX). Out-of-sample rank IC **0.038 (t = 7.5)**: a real but small signal. Long top-k / short bottom-k from 09:50 to 15:15: gross +7.6 bps/trade at k=1, falling to 1.7 at k=3. At 5 bps slippage Sharpe -0.7; at 1 bp slippage Sharpe +0.12. **Not tradable at retail costs.** Intraday needs either a much sharper model or passive (limit) execution.
+
+**2. Swing ranking (`mlq.ml_swing`, LightGBM, 21 daily features, point-in-time top-150 universe, retrained every 126 days, weekly rebalance).** Weekly rank IC **0.039 in the clean 2022+ window (t = 4.3)**, 0.053 in the survivor-biased 2016-2021 window. Most important features: VIX level, 20/60-day returns, market trend.
+
+| Portfolio (2022+ clean, net of costs) | Slippage | CAGR | Sharpe | Max DD |
+|---|---|---|---|---|
+| Long-only top-20, delivery | 5 bps | 14.3% | **0.73** | -27% |
+| Long-only top-20, delivery | 2 bps | 16.5% | **0.82** | -27% |
+| Long/short 10+10, futures | 5 bps | -0.7% | -0.02 | -23% |
+| Long/short 10+10, futures | 2 bps | 1.6% | 0.20 | -20% |
+(Baselines to beat: EW top-100 Sharpe 0.64 / 10%; L/S momentum rule 0.71.)
+
+Read-out: the model has real skill (IC), the long-only version already edges the best baseline, but **turnover is 60-70x per year** (weekly full reshuffle): fees were ~Rs 7.6 lakh on a Rs 10 lakh account over 4.8 years. The market-neutral version loses its edge to that turnover. DSR is still < 0.95, so this is not yet proven.
+
+## Next experiments (cheap, high value)
+1. Cut turnover: rank-hysteresis, trade only when predicted-rank change is large, 10-20 day holds, cost-aware portfolio optimiser.
+2. Longer-horizon labels (10/20 days) so the signal per trade is bigger than the round-trip cost.
+3. Add sector-index, participant-OI, USDINR/Brent/Nasdaq (lagged) features; try ranking-loss objective (LambdaRank) and an ensemble of LightGBM + linear.
+4. Market-regime gating from VIX / Nifty trend for exposure.
+5. Intraday: only trade the highest-conviction 1 stock/day, test limit-order fills.

@@ -8,6 +8,7 @@ import polars as pl
 
 from mlq.config import INSTRUMENTS_FILE
 
+MARGIN_BUFFER = 0.95  # use at most 95% of equity as margin (headroom for fees and price drift)
 MARGIN_PCT = 0.20   # rough SPAN+exposure margin as % of notional [verify with Upstox margin calculator]
 
 

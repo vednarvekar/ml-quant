@@ -93,6 +93,12 @@ def build(ctx, p):
     return f, yd, M, O
 
 
+def make_model():
+    return LGBMRegressor(n_estimators=300, learning_rate=0.03, num_leaves=15, min_child_samples=500,
+                         subsample=0.7, subsample_freq=1, colsample_bytree=0.7, reg_lambda=10.0,
+                         objective="huber", alpha=0.05, verbose=-1, n_jobs=4)
+
+
 def vix(dates):
     v = pl.read_parquet(DATA / "clean" / "idx" / "1d" / "India_VIX.parquet").select(["date", "close"])
     m = dict(zip(v["date"].to_list(), v["close"].to_list()))
@@ -114,9 +120,7 @@ def main():
         m = M[tr] & ~np.isnan(yd[tr])
         Xtr, ytr = X[tr][m], yd[tr][m]
         ok = ~np.isnan(Xtr).all(axis=1)
-        mdl = LGBMRegressor(n_estimators=300, learning_rate=0.03, num_leaves=15, min_child_samples=500,
-                            subsample=0.7, subsample_freq=1, colsample_bytree=0.7, reg_lambda=10.0,
-                            objective="huber", alpha=0.05, verbose=-1, n_jobs=4)
+        mdl = make_model()
         mdl.fit(Xtr[ok], ytr[ok])
         sel = M[te]
         P = np.full((len(te), N), np.nan)

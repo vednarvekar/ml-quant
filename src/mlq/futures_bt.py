@@ -15,7 +15,7 @@ import numpy as np
 import polars as pl
 
 from mlq.costs import DEFAULT, Rates, leg_cost
-from mlq.futures import MARGIN_PCT
+from mlq.futures import MARGIN_BUFFER, MARGIN_PCT
 
 
 @dataclass
@@ -73,14 +73,19 @@ def simulate_futures(open_, close, W, dates, lot, capital=2_000_000.0, exposure=
         # target lots
         w = np.nan_to_num(W[t], nan=0.0)
         tgt = lots.copy()
-        notional_budget = max(equity, 0.0) * exposure
-        for j in np.nonzero(tradable)[0]:
-            want = w[j] * notional_budget
-            n = np.sign(want) * np.floor(abs(want) / (lot[j] * o[j]) + 0.5)
-            tgt[j] = n
-        mgn = (np.abs(tgt) * lot * np.where(tradable, o, np.where(np.isnan(prev), 0, prev))).sum() * margin_pct
-        if mgn > equity > 0:                                    # margin cap: scale down proportionally
-            tgt = np.sign(tgt) * np.floor(np.abs(tgt) * equity / mgn)
+        # Only trade when the target weights CHANGED (a decision day). Otherwise lots are left alone
+        # (no daily re-sizing as equity drifts), matching the live paper broker.
+        resize = t == 0 or not np.array_equal(W[t], W[t - 1], equal_nan=True)
+        if resize:
+            notional_budget = max(equity, 0.0) * exposure
+            for j in np.nonzero(tradable)[0]:
+                want = w[j] * notional_budget
+                n = np.sign(want) * np.floor(abs(want) / (lot[j] * o[j]) + 0.5)
+                tgt[j] = n
+            mgn = (np.abs(tgt) * lot * np.where(tradable, o, np.where(np.isnan(prev), 0, prev))).sum() * margin_pct
+            cap = equity * MARGIN_BUFFER                        # keep 5% headroom for fees / price drift
+            if mgn > cap > 0:                                   # margin cap: scale down proportionally
+                tgt = np.sign(tgt) * np.floor(np.abs(tgt) * cap / mgn)
         delta = np.where(tradable, tgt - lots, 0.0)
         for j in np.nonzero(delta)[0]:
             nv = abs(delta[j]) * lot[j] * o[j]

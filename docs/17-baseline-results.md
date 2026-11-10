@@ -113,3 +113,31 @@ Read-out:
 - 2x leverage doubles return **and** drawdown (about -45%); not recommended before paper trading proves the live edge.
 - Still unproven: DSR below 0.95 after ~200 trials, one 4.8-year window, today's lot sizes used for history, no futures basis modelled, ML trained on a 150-name liquidity universe.
 - A bug found and fixed along the way: non-F&O names had a missing lot size, which silently disabled the margin cap (test added).
+
+## CORRECTION (2026-11-10): universe look-ahead fixed, futures numbers revised down
+Found while building paper trading: the point-in-time universe is stored as month-END snapshots, and the backtests applied each snapshot to the whole of that month (a small look-ahead in who was in the top-150/100). Fixed in `swing.Ctx` and `baselines`: day t now uses the previous month's snapshot. Also fixed in `futures_bt`: lots are no longer silently re-sized every day (trades only when the target weights change, as a real account would), plus a 5% margin buffer. Everything from "Phase 4, first ML experiments" onward was re-run. The old registry is archived as `data/experiments_pre_leakfix.jsonl`.
+
+What changed (2022+ clean window):
+- ML signal is intact: weekly rank IC **0.047 (t = 4.8)**, vs 0.039 before.
+- Baselines about the same (EW top-100 Sharpe 0.61, Combo 0.70, L/S momentum rule 0.74).
+- Best delivery ML portfolios: Sharpe 0.9-1.0, CAGR 18-20%, max DD -21% to -28%, DSR 0.6-0.65 (still not significant).
+- **Lot-aware futures, revised (1x exposure, 5 bps slippage, monthly roll):**
+
+| Strategy | Capital | CAGR | Sharpe | Max DD | Names held |
+|---|---|---|---|---|---|
+| top-5 weekly | Rs 10L | 33% | 1.17 | -26% | 3.5 |
+| top-10 weekly hyst | Rs 20L | 25% | 1.00 | -24% | 7.2 |
+| top-10 weekly hyst | Rs 50L | 13% | 0.67 | -25% | 9.8 |
+| top-20 weekly hyst | Rs 50L | 21% | 0.95 | -26% | 17.9 |
+| top-20 weekly hyst | Rs 1 crore | 16% | 0.86 | -23% | 19.8 |
+| top-20, 20-day rebalance | Rs 1 crore | 22% | 1.09 | -23% | 19.8 |
+
+Honest summary: roughly **Sharpe 0.8-1.0 and 15-25% a year** across account sizes that can hold positions (the old 1.0-1.2 / 22-32% was inflated by the leak). Variation between near-identical configurations is large (e.g. 13% vs 21% CAGR for k=10 vs k=20 at Rs 50L), which is what noise looks like on a 4.8-year window. Do not read precision into any single row.
+
+## Paper trading (built 2026-11-10): `mlq.paper`
+- `broker.py`: simulated futures broker (lots, margin, slippage, fees, monthly roll), state saved in `data/paper/state.json`; there is no connection to any real order API.
+- `signals.py`: same features, LightGBM model and hysteresis selection as the backtest; retrained at least every 126 trading days.
+- `update.py`: incremental Upstox daily candles (read-only token, 1 request/s) + NSE bhavcopy + offline rebuild.
+- `run.py`: daily runner. Processes new days, decides every 5 trading days (executes at the next open), writes `data/paper/{equity.csv, trades.csv, decisions.jsonl, report.md}`. Guards: KILL file, stale data, feature mismatch, >15% moves in a held name.
+- **Self-test:** `python -m mlq.paper.run --replay 2022-01-03` pushes 4.8 years through the live code path and ends at exactly the same equity as the backtest engine (Rs 58,78,708 vs Rs 58,78,708).
+Daily use: `uv run python -m mlq.paper.run --update` after market close (about 10 minutes the first time).

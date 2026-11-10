@@ -7,6 +7,7 @@ is printed; from 2022 it is high (we downloaded every 2022+ top-100 name still l
 uv run python -m mlq.baselines
 """
 import glob
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -38,7 +39,7 @@ def build_weights(dates, syms, close, uni: pl.DataFrame, top_n: int, mode: str,
     me = set(month_end_idx(dates))
     for t in range(T):
         if t in me and dates[t].isoformat() >= START:
-            m = dates[t].replace(day=1)
+            m = (dates[t].replace(day=1) - timedelta(days=1)).replace(day=1)  # previous month: no look-ahead
             names = uni.filter((pl.col("month") == m) & (pl.col("rank") <= top_n))["name"].to_list()
             have = [col[n] for n in names if n in col and not np.isnan(close[t, col[n]])]
             cover.append(len(have) / max(len(names), 1))

@@ -10,6 +10,7 @@ Windows:
 uv run python -m mlq.swing
 """
 from dataclasses import dataclass
+from datetime import timedelta
 
 import numpy as np
 import polars as pl
@@ -33,8 +34,14 @@ class Ctx:
     fno: np.ndarray                # bool N: has stock futures today
     _cache: dict
 
+    def _month_key(self, t: int):
+        """Universe rows are month-END snapshots labelled with that month. Day t may only use a
+        snapshot completed BEFORE t, i.e. the previous calendar month (no look-ahead)."""
+        first = self.dates[t].replace(day=1)
+        return (first - timedelta(days=1)).replace(day=1)
+
     def members(self, t: int, top_n: int) -> np.ndarray:
-        m = self.dates[t].replace(day=1)
+        m = self._month_key(t)
         key = (m, top_n)
         if key not in self._cache:
             names = set(self.uni.filter((pl.col("month") == m) & (pl.col("rank") <= top_n))
@@ -45,7 +52,7 @@ class Ctx:
 
     def coverage(self, t: int, top_n: int) -> float:
         self.members(t, top_n)
-        have = self._cache[(self.dates[t].replace(day=1), top_n)]
+        have = self._cache[(self._month_key(t), top_n)]
         return have[0].sum() / max(have[1], 1)
 
 

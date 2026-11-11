@@ -24,3 +24,5 @@ Status: DRAFT v0.2 (2026-11-09) - facts verified, user decisions recorded in doc
 | 15 | [Data findings](15-data-findings.md) | What we found in the real downloaded data (Phase 1) |
 | 16 | [Harness and baselines](16-harness-and-baselines.md) | Backtest engine + validation tools (Phase 2) |
 | 17 | [Baseline results](17-baseline-results.md) | Phase 2 gate, swing + intraday leaderboards, Phase 4 plan |
+| 18 | [Audit](18-audit-2026-11-10.md) | Independent end-to-end audit: what is solid, what is not |
+| 19 | [Audit response](19-audit-response.md) | Fixes, honest re-test, verdict |

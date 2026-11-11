@@ -1,4 +1,4 @@
-# Daily paper-trading run (no real orders). Scheduled via Windows Task Scheduler, Mon-Fri 17:30.
+# Daily paper-trading run (no real orders). Scheduled via Windows Task Scheduler, Mon-Fri 19:30.
 # Logs to data/paper/logs/YYYY-MM-DD.log
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot

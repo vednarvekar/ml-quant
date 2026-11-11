@@ -31,10 +31,14 @@ def weights_for(names: list) -> dict:
 
 
 def features(ctx, p):
-    """Feature cube X (T,N,F), label yd, universe mask M for the full history (+ latest day)."""
-    f, yd, M, _ = build(ctx, p)
+    """Model v3 feature cube X (T,N,F) (21 daily + beta/size regime + futures OI/basis + delivery %),
+    raw label, and the top-100 point-in-time universe mask M."""
+    from mlq import fo_features as ff
+    from mlq.ml_v2 import build_v2
+    fo = ff.build(ctx)
+    f, y_raw, _, M = build_v2(ctx, p, fo, use_mto=True)
     names = list(f)
-    return np.stack([f[k] for k in names], axis=-1), yd, M, names
+    return np.stack([f[k] for k in names], axis=-1), y_raw, M, names
 
 
 def fit_from(X, yd, M, embargo: int = 5):

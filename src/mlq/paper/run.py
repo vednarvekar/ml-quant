@@ -70,8 +70,34 @@ def decide(b: PaperBroker, ctx, i, scores: dict, alerts: list, home: Path, block
                             "scores": {s: round(scores[s], 5) for s in names}}) + "\n")
 
 
-def advance(b, ctx, O, lot, i, home, alerts, trades_out):
-    new_month = ctx.dates[i].month != ctx.dates[i - 1].month
+def equity_future_expiries() -> list:
+    """Monthly stock-futures expiry dates from the Upstox instrument master (current + next series)."""
+    from datetime import datetime as _dt
+
+    from mlq.config import INSTRUMENTS_FILE
+    d = pl.read_parquet(INSTRUMENTS_FILE).filter((pl.col("segment") == "NSE_FO")
+                                                 & (pl.col("instrument_type") == "FUT")
+                                                 & (pl.col("underlying_type") == "EQUITY"))
+    return sorted({_dt.fromtimestamp(x / 1000).date() for x in d["expiry"].drop_nulls().unique().to_list()})
+
+
+def roll_due(b, d, expiries, roll_days: int = 2) -> bool:
+    """Stock futures are PHYSICALLY settled and expire monthly: roll `roll_days` trading days before
+    expiry (weekday count; holidays make it at most a day early) and only once per expiry."""
+    nxt = next((e for e in expiries if e >= d), None)
+    if nxt is None or b.last_roll == str(nxt):
+        return False
+    if np.busday_count(d, nxt) <= roll_days:
+        b.last_roll = str(nxt)
+        return True
+    return False
+
+
+def advance(b, ctx, O, lot, i, home, alerts, trades_out, expiries=None):
+    if expiries is None:                                  # replay/self-test: month-based (matches backtest)
+        new_month = ctx.dates[i].month != ctx.dates[i - 1].month
+    else:
+        new_month = roll_due(b, ctx.dates[i], expiries)
     o, c, pc = day_prices(ctx, O, i, lot)
     r = b.process_day(ctx.dates[i], o, c, pc, lot, new_month)
     b.days_since += 1
@@ -117,8 +143,9 @@ def run_live(cfg: PaperConfig, home: Path = HOME):
         start_i = len(ctx.dates)
     else:
         start_i = next((k for k, d in enumerate(ctx.dates) if str(d) > b.last_date), len(ctx.dates))
+    expiries = equity_future_expiries()
     for i in range(start_i, len(ctx.dates)):
-        r = advance(b, ctx, O, lot, i, home, alerts, trades)
+        r = advance(b, ctx, O, lot, i, home, alerts, trades, expiries)
         append_csv(home / "equity.csv", [{"date": str(ctx.dates[i]), "equity": round(r["equity"], 2),
                                           "nifty": round(float(ctx.idx_close[i]), 2),
                                           "positions": sum(1 for n in b.lots.values() if n)}])
@@ -129,7 +156,7 @@ def run_live(cfg: PaperConfig, home: Path = HOME):
     meta = json.loads((signals.MODEL_DIR / f"model_{tag}.json").read_text()) if tag else None
     age = (len(ctx.dates) - 1 - next(k for k, d in enumerate(ctx.dates) if str(d) >= meta["trained_through"])
            ) if meta else 10**9
-    if age > cfg.retrain_days:
+    if age > cfg.retrain_days or (meta and meta["features"] != names):
         mdl, last = signals.fit_from(X, yd, M)
         tag = str(D)
         signals.save_model(mdl, names, ctx.dates[last], tag)

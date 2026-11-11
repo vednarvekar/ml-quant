@@ -52,8 +52,10 @@ def refresh_data(refresh_instruments_days: int = 7) -> dict:
 
 
 def rebuild_offline() -> None:
-    from mlq import adjust, clean, nse_bhav, review, universe
+    from mlq import adjust, clean, nse_bhav, nse_fo, nse_mto, review, universe
     nse_bhav.main()
+    nse_fo.main()          # futures bhavcopy (membership, OI, basis, expiry, lots)
+    nse_mto.main()         # delivery %
     clean.main()
     adjust.main()
     review.main()

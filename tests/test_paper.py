@@ -44,3 +44,14 @@ def test_broker_exits_names_not_in_new_targets_and_rolls(tmp_path):
                   {"AAA": 100.0, "BBB": 100.0}, lot, True)        # new month -> roll cost on AAA
     assert "AAA" not in b.lots and b.lots["BBB"] > 0
     assert b.equity < e0                                          # fees were paid, no price move
+
+
+def test_roll_due_two_days_before_expiry_once(tmp_path):
+    from mlq.paper.run import roll_due
+    b = PaperBroker.load(tmp_path / "s.json", PaperConfig())
+    exp = [date(2026, 11, 24), date(2026, 12, 29)]            # a Tuesday expiry
+    assert not roll_due(b, date(2026, 11, 19), exp)           # 3 weekdays before
+    assert roll_due(b, date(2026, 11, 20), exp)               # 2 weekdays before -> roll
+    assert not roll_due(b, date(2026, 11, 23), exp)           # already rolled this expiry
+    assert not roll_due(b, date(2026, 11, 25), exp)           # next cycle not due yet
+    assert roll_due(b, date(2026, 12, 25), exp)               # next cycle

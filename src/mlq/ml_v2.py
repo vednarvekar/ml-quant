@@ -110,7 +110,7 @@ def main():
     ctx = make_ctx()
     fo = ff.build(ctx)
     v3 = len(sys.argv) > 1 and sys.argv[1] == "v3"
-    prefix = "ml_v3" if v3 else "ml_v2"
+    prefix = ("ml_v3" if v3 else "ml_v2") + ("" if HOLD == 5 else f"_h{HOLD}")
     f, y_raw, y_res, M = build_v2(ctx, p, fo, use_mto=v3)
     names = list(f)
     X = np.stack([f[k] for k in names], axis=-1)

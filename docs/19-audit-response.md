@@ -56,3 +56,8 @@ Signal skill (weekly rank IC, 2022+): old model 0.046 (t 4.8) | v2 (top-100, fut
 3. Real futures prices/basis (we use spot ex-dividend; carry not modelled), real margins (flat 20%), F&O ban list.
 4. Event model needs a legitimate announcements feed (not scraped from blocked APIs).
 5. Incremental feature build to make the daily run faster (currently ~13 min, mostly downloads).
+
+## Round 2 (2026-11-11): longer horizons and a luck check
+- **Longer horizons do not help.** Delivery/OI model trained for 10 and 20 day labels: weekly rank IC (2022+) 0.058 (5d) -> 0.041 (10d) -> 0.020 (20d). Market-neutral L/S, Rs 5 crore: 10-day model best case Sharpe 0.37 (k=10, rebalance 5d), 0.08 at 10d rebalance; **20-day model negative (-0.3 to -0.5)**. The signal lives only at the 5-day horizon, which is also the horizon where costs bite hardest.
+- **Luck check (Deflated Sharpe, rough).** About 35 distinct ML portfolio configurations were evaluated in this audit round (several models x portfolio types x k x rebalance x capital). Their Sharpes have mean 0.09, std 0.55, max 0.88, so the best Sharpe expected from luck alone is about **1.2**. Our best market-neutral result is 0.70, giving a Deflated Sharpe probability of about **0.15** (we want > 0.95). In plain terms: after counting every try, the 0.70 cannot be told apart from luck. The estimate is crude (it mixes very different strategy types) but the direction is clear.
+- **Therefore:** keep the v3 5-day market-neutral book as the single candidate and judge it only on **new, untouched data** (paper trading from 2026-11-09 on), not on more re-tuning of the 2022-2026 window. Further tuning on the same window only deepens the multiple-testing problem.

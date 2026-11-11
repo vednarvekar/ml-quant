@@ -60,7 +60,11 @@ def main(pred_files):
     for pf in pred_files:
         name = pf.split("/")[-1].replace(".npy", "").replace("ml_", "")
         pred = np.where(member & np.isfinite(np.load(pf)), np.load(pf), np.nan)
-        for cap, k, R in ((50_000_000, 15, 5), (50_000_000, 15, 10), (50_000_000, 10, 5)):
+        import re
+        m_h = re.search(r"_h(\d+)_pred", pf)
+        hold = int(m_h.group(1)) if m_h else 5
+        cfgs = sorted({(50_000_000, k, R) for k in (10, 15) for R in (hold, max(5, hold // 2))})
+        for cap, k, R in cfgs:
             keep = 2 * k
 
             def run(W, cap=cap):

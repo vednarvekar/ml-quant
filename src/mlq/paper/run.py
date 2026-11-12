@@ -58,15 +58,23 @@ def decide(b: PaperBroker, ctx, i, scores: dict, alerts: list, home: Path, block
     if blocked:
         alerts.append(f"no decision: {blocked}")
         return
-    names = signals.select_names(scores, set(b.target), b.cfg.k, b.cfg.keep)
-    if not names:
-        alerts.append("no decision: not enough scored names")
-        return
-    b.pending = {"decided": str(ctx.dates[i]), "weights": signals.weights_for(names)}
-    b.target = list(names)
+    if b.cfg.mode == "ls":
+        longs, shorts = signals.select_ls(scores, set(b.target), set(b.target_short), b.cfg.k, b.cfg.keep)
+        if not longs:
+            alerts.append("no decision: not enough scored names")
+            return
+        b.pending = {"decided": str(ctx.dates[i]), "weights": signals.weights_ls(longs, shorts)}
+        b.target, b.target_short, names = list(longs), list(shorts), list(longs) + list(shorts)
+    else:
+        names = signals.select_names(scores, set(b.target), b.cfg.k, b.cfg.keep)
+        if not names:
+            alerts.append("no decision: not enough scored names")
+            return
+        b.pending = {"decided": str(ctx.dates[i]), "weights": signals.weights_for(names)}
+        b.target = list(names)
     b.days_since = 0
     with open(home / "decisions.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps({"date": str(ctx.dates[i]), "names": names,
+        f.write(json.dumps({"date": str(ctx.dates[i]), "names": names, "mode": b.cfg.mode,
                             "scores": {s: round(scores[s], 5) for s in names}}) + "\n")
 
 
@@ -129,54 +137,67 @@ def report(b, ctx, home, alerts, last_trades):
     print("\n".join(lines))
 
 
-def run_live(cfg: PaperConfig, home: Path = HOME):
-    home.mkdir(parents=True, exist_ok=True)
+ACCOUNTS = [  # name, config. Sized so whole futures lots can actually hold the book (see docs/19)
+    ("ls_5cr", PaperConfig(capital=50_000_000, k=10, keep=20, mode="ls")),
+    ("long_1cr", PaperConfig(capital=10_000_000, k=20, keep=40, mode="long")),
+]
+
+
+def run_live(accounts=None):
+    accounts = accounts or ACCOUNTS
     p, ctx, O, lot = world()
-    b = PaperBroker.load(home / "state.json", cfg)
-    alerts, trades = [], []
     D = ctx.dates[-1]
-    stale = (date.today() - D).days > cfg.max_stale_days
-    blocked = ("data is stale (latest " + str(D) + ")" if stale else
-               "KILL file present" if (home / "KILL").exists() else None)
-    if b.last_date is None:                                   # first ever run: decide at latest close
-        b.start_date, b.last_date, b.days_since = str(D), str(D), cfg.rebalance_days
-        start_i = len(ctx.dates)
-    else:
-        start_i = next((k for k, d in enumerate(ctx.dates) if str(d) > b.last_date), len(ctx.dates))
-    expiries = equity_future_expiries()
-    for i in range(start_i, len(ctx.dates)):
-        r = advance(b, ctx, O, lot, i, home, alerts, trades, expiries)
-        append_csv(home / "equity.csv", [{"date": str(ctx.dates[i]), "equity": round(r["equity"], 2),
-                                          "nifty": round(float(ctx.idx_close[i]), 2),
-                                          "positions": sum(1 for n in b.lots.values() if n)}])
-    append_csv(home / "trades.csv", trades)
-    # model: retrain if none or old
+    cfg0 = accounts[0][1]
+    # ---- model (shared by all accounts): retrain if none, old, or the feature list changed
     X, yd, M, names = signals.features(ctx, p)
     tag = signals.latest_model_tag()
     meta = json.loads((signals.MODEL_DIR / f"model_{tag}.json").read_text()) if tag else None
     age = (len(ctx.dates) - 1 - next(k for k, d in enumerate(ctx.dates) if str(d) >= meta["trained_through"])
            ) if meta else 10**9
-    if age > cfg.retrain_days or (meta and meta["features"] != names):
+    if age > cfg0.retrain_days or (meta and meta["features"] != names):
         mdl, last = signals.fit_from(X, yd, M)
         tag = str(D)
         signals.save_model(mdl, names, ctx.dates[last], tag)
         print(f"retrained model, trained through {ctx.dates[last]}")
     booster, meta = signals.load_model(tag)
-    if meta["features"] != names:
-        alerts.append("feature list changed since the model was trained: retrain required")
-        blocked = blocked or "feature mismatch"
     i = len(ctx.dates) - 1
     fno = np.array([s in lot for s in ctx.syms])
     scores = signals.score_day(booster, X[i], M[i], fno, ctx.syms)
-    held_now = [s for s, n in b.lots.items() if n]
-    for j, s in enumerate(ctx.syms):                           # corporate-action guard on holdings
-        if s in held_now and np.isfinite(ctx.close[i, j]) and np.isfinite(ctx.close[i - 1, j]):
-            if abs(ctx.close[i, j] / ctx.close[i - 1, j] - 1) > 0.15:
-                alerts.append(f"{s} moved >15% today: check for split/bonus/demerger before trusting P&L")
-    decide(b, ctx, i, scores, alerts, home, blocked)
-    b.save()
-    report(b, ctx, home, alerts, [t for t in trades if t["date"] == str(D)])
-    return b
+    expiries = equity_future_expiries()
+    out = {}
+    for name, cfg in accounts:
+        home = HOME / name
+        home.mkdir(parents=True, exist_ok=True)
+        b = PaperBroker.load(home / "state.json", cfg)
+        alerts, trades = [], []
+        stale = (date.today() - D).days > cfg.max_stale_days
+        blocked = ("data is stale (latest " + str(D) + ")" if stale else
+                   "KILL file present" if ((home / "KILL").exists() or (HOME / "KILL").exists()) else None)
+        if meta["features"] != names:
+            alerts.append("feature list changed since the model was trained: retrain required")
+            blocked = blocked or "feature mismatch"
+        if b.last_date is None:                               # first ever run: decide at latest close
+            b.start_date, b.last_date, b.days_since = str(D), str(D), cfg.rebalance_days
+            start_i = len(ctx.dates)
+        else:
+            start_i = next((k for k, d in enumerate(ctx.dates) if str(d) > b.last_date), len(ctx.dates))
+        for k in range(start_i, len(ctx.dates)):
+            r = advance(b, ctx, O, lot, k, home, alerts, trades, expiries)
+            append_csv(home / "equity.csv", [{"date": str(ctx.dates[k]), "equity": round(r["equity"], 2),
+                                              "nifty": round(float(ctx.idx_close[k]), 2),
+                                              "positions": sum(1 for n in b.lots.values() if n)}])
+        append_csv(home / "trades.csv", trades)
+        held_now = [s for s, n in b.lots.items() if n]
+        for j, s in enumerate(ctx.syms):                       # corporate-action guard on holdings
+            if s in held_now and np.isfinite(ctx.close[i, j]) and np.isfinite(ctx.close[i - 1, j]):
+                if abs(ctx.close[i, j] / ctx.close[i - 1, j] - 1) > 0.15:
+                    alerts.append(f"{s} moved >15% today: check for split/bonus/demerger before trusting P&L")
+        decide(b, ctx, i, scores, alerts, home, blocked)
+        b.save()
+        print(f"\n######## account {name} ({cfg.mode}, Rs {cfg.capital / 1e7:.1f} crore, k={cfg.k}) ########")
+        report(b, ctx, home, alerts, [t for t in trades if t["date"] == str(D)])
+        out[name] = b
+    return out
 
 
 def run_replay(start: str, cfg: PaperConfig):
@@ -221,18 +242,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--update", action="store_true")
     ap.add_argument("--replay", metavar="YYYY-MM-DD")
-    ap.add_argument("--capital", type=float, default=PaperConfig.capital)
-    ap.add_argument("--k", type=int, default=PaperConfig.k)
     a = ap.parse_args()
-    cfg = PaperConfig(capital=a.capital, k=a.k, keep=2 * a.k)
     if a.replay:
-        run_replay(a.replay, cfg)
+        run_replay(a.replay, PaperConfig())
         return
     if a.update:
         from mlq.paper import update
         print(update.refresh_data(), flush=True)
         update.rebuild_offline()
-    run_live(cfg)
+    run_live()
 
 
 if __name__ == "__main__":

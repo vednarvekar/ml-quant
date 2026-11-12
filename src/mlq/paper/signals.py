@@ -26,6 +26,27 @@ def select_names(score: dict, held: set, k: int, keep: int) -> list:
     return chosen
 
 
+def select_ls(score: dict, held_long: set, held_short: set, k: int, keep: int):
+    """Market-neutral book: top-k longs and bottom-k shorts with hysteresis on both sides.
+    Returns (longs, shorts); both empty if there are too few scored names."""
+    ranked = [s for s, v in sorted(score.items(), key=lambda kv: -kv[1]) if np.isfinite(v)]
+    n = len(ranked)
+    if n < 4 * k:
+        return [], []
+    rank = {s: i for i, s in enumerate(ranked)}
+    keep_l = sorted((s for s in held_long if rank.get(s, 10**9) < keep), key=lambda s: rank[s])[:k]
+    longs = keep_l + [s for s in ranked if s not in keep_l][:k - len(keep_l)]
+    keep_s = sorted((s for s in held_short if rank.get(s, -1) >= n - keep and s not in longs),
+                    key=lambda s: -rank[s])[:k]
+    shorts = keep_s + [s for s in reversed(ranked) if s not in keep_s and s not in longs][:k - len(keep_s)]
+    return longs, shorts
+
+
+def weights_ls(longs: list, shorts: list) -> dict:
+    k = max(len(longs), 1)
+    return {**{s: 0.5 / k for s in longs}, **{s: -0.5 / k for s in shorts}}
+
+
 def weights_for(names: list) -> dict:
     return {s: 1.0 / len(names) for s in names} if names else {}
 

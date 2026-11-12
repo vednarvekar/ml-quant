@@ -30,6 +30,7 @@ class PaperConfig:
     universe: int = 150          # point-in-time liquidity universe size
     max_stale_days: int = 4      # no new orders if data is older than this (calendar days)
     retrain_days: int = 126      # retrain the model at least this often (trading days)
+    mode: str = "long"           # "long" = long-only top-k; "ls" = long top-k / short bottom-k
 
 
 @dataclass
@@ -45,6 +46,7 @@ class PaperBroker:
     start_date: str | None = None
     target: list = field(default_factory=list)       # names chosen at the last decision (for hysteresis)
     last_roll: str | None = None                      # expiry date already rolled (avoid double roll)
+    target_short: list = field(default_factory=list)  # short names chosen at the last decision (ls mode)
     rates: Rates = DEFAULT
 
     @classmethod
@@ -55,7 +57,8 @@ class PaperBroker:
             return cls(path=path, cfg=cfg, equity=s["equity"], lots=s["lots"], pending=s["pending"],
                        last_date=s["last_date"], days_since=s["days_since"],
                        start_equity=s["start_equity"], start_date=s["start_date"],
-                       target=s.get("target", []), last_roll=s.get("last_roll"))
+                       target=s.get("target", []), last_roll=s.get("last_roll"),
+                       target_short=s.get("target_short", []))
         return cls(path=path, cfg=cfg, equity=cfg.capital, start_equity=cfg.capital)
 
     def save(self) -> None:
@@ -63,7 +66,8 @@ class PaperBroker:
         s = {"equity": self.equity, "lots": self.lots, "pending": self.pending,
              "last_date": self.last_date, "days_since": self.days_since,
              "start_equity": self.start_equity, "start_date": self.start_date,
-             "target": self.target, "last_roll": self.last_roll}
+             "target": self.target, "last_roll": self.last_roll,
+             "target_short": self.target_short}
         self.path.write_text(json.dumps(s, indent=1), encoding="utf-8")
 
     # ------------------------------------------------------------------

@@ -77,3 +77,11 @@ Signal skill (weekly rank IC, 2022+): old model 0.046 (t 4.8) | v2 (top-100, fut
 ## Operations
 - `python -m mlq.paper.status` gives a plain-English health check (did the 7:30 PM job finish, account value, holdings, alerts).
 - Scheduled runs were being killed (Windows code 0xC000013A, i.e. the console window of the task was closed). The task now runs hidden (`-WindowStyle Hidden`).
+
+## Paper trading accounts (reset 2026-11-12, first picks decided on data of 2026-11-11)
+The first paper account (Rs 20 lakh, top-10) held a single stock because one futures lot costs Rs 3-10 lakh: not a test of the strategy. It was replaced by two accounts sized so whole lots can hold the book, both sharing one daily model:
+| Account | Capital | Book | Why |
+|---|---|---|---|
+| `ls_5cr` | Rs 5 crore | long top-10 / short bottom-10, equal weight, 5-day rebalance (market-neutral) | the candidate with positive alpha in the backtest (Sharpe ~0.45 with realistic fills, ~0.70 at the open) |
+| `long_1cr` | Rs 1 crore | long top-20 | the long-only reference (backtest Sharpe ~0.85, about the same as a Midcap index fund) |
+Each has its own folder under `data/paper/` (state, equity.csv, trades.csv, decisions.jsonl, report.md); `python -m mlq.paper.status` summarises both. Judge only after 6-8 weeks, against the Nifty 50 and a Midcap 100 index fund over the same days.

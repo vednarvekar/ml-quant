@@ -55,3 +55,21 @@ def test_roll_due_two_days_before_expiry_once(tmp_path):
     assert not roll_due(b, date(2026, 11, 23), exp)           # already rolled this expiry
     assert not roll_due(b, date(2026, 11, 25), exp)           # next cycle not due yet
     assert roll_due(b, date(2026, 12, 25), exp)               # next cycle
+
+
+def test_select_ls_and_short_pnl(tmp_path):
+    from mlq.paper.signals import select_ls, weights_ls
+    score = {f"S{i}": 100 - i for i in range(60)}
+    longs, shorts = select_ls(score, set(), set(), 5, 10)
+    assert longs == [f"S{i}" for i in range(5)] and shorts == [f"S{i}" for i in range(59, 54, -1)]
+    assert abs(sum(weights_ls(longs, shorts).values())) < 1e-12          # dollar neutral
+    assert select_ls({"A": 1.0, "B": 2.0}, set(), set(), 5, 10) == ([], [])
+    # hysteresis: a held short still in the bottom `keep` stays
+    _, s2 = select_ls(score, set(), {"S52"}, 5, 10)
+    assert "S52" in s2
+    # broker: a short position earns when the price falls
+    cfg = PaperConfig(capital=1_000_000, slippage_bps=0, mode="ls")
+    b = PaperBroker.load(tmp_path / "s.json", cfg)
+    b.pending = {"decided": "x", "weights": {"AAA": -1.0}}
+    b.process_day(date(2024, 1, 2), {"AAA": 100.0}, {"AAA": 90.0}, {"AAA": 100.0}, {"AAA": 100}, False)
+    assert b.lots["AAA"] < 0 and b.equity > 1_000_000 + 90_000

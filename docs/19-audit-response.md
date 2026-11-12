@@ -61,3 +61,19 @@ Signal skill (weekly rank IC, 2022+): old model 0.046 (t 4.8) | v2 (top-100, fut
 - **Longer horizons do not help.** Delivery/OI model trained for 10 and 20 day labels: weekly rank IC (2022+) 0.058 (5d) -> 0.041 (10d) -> 0.020 (20d). Market-neutral L/S, Rs 5 crore: 10-day model best case Sharpe 0.37 (k=10, rebalance 5d), 0.08 at 10d rebalance; **20-day model negative (-0.3 to -0.5)**. The signal lives only at the 5-day horizon, which is also the horizon where costs bite hardest.
 - **Luck check (Deflated Sharpe, rough).** About 35 distinct ML portfolio configurations were evaluated in this audit round (several models x portfolio types x k x rebalance x capital). Their Sharpes have mean 0.09, std 0.55, max 0.88, so the best Sharpe expected from luck alone is about **1.2**. Our best market-neutral result is 0.70, giving a Deflated Sharpe probability of about **0.15** (we want > 0.95). In plain terms: after counting every try, the 0.70 cannot be told apart from luck. The estimate is crude (it mixes very different strategy types) but the direction is clear.
 - **Therefore:** keep the v3 5-day market-neutral book as the single candidate and judge it only on **new, untouched data** (paper trading from 2026-11-09 on), not on more re-tuning of the 2022-2026 window. Further tuning on the same window only deepens the multiple-testing problem.
+
+## Round 3 (2026-11-12): execution realism (no re-tuning)
+`mlq.exec_test` re-runs the SAME v3 5-day decisions but fills at prices built from the 5-minute data instead of the raw 09:15 open. The open-fill run reproduces the earlier numbers exactly (Sharpe 0.70 / 0.88), so the data plumbing is right.
+
+| Fill price | L/S k=10 (Rs 5 cr) Sharpe [min,max] | alpha t | Long-only top-20 (Rs 1 cr) Sharpe |
+|---|---|---|---|
+| open 09:15 (old assumption) | 0.70 [0.56, 0.85] | 1.65 | 0.88 |
+| VWAP 09:15-09:30 | 0.45 [0.20, 0.65] | 1.09 | 0.84 |
+| VWAP 09:15-09:45 | 0.45 [0.19, 0.64] | 1.08 | 0.85 |
+| open of the 10:00 bar | 0.47 [0.22, 0.67] | 1.13 | 0.86 |
+
+**Reading:** about a third of the market-neutral Sharpe comes from capturing the opening print (the model's overnight/gap information). Any fill after the open gives back about 0.25 Sharpe. **Realistic expectation for the L/S book: Sharpe about 0.45, alpha t about 1.1** - weaker than the headline. Long-only is almost unaffected. Whether a futures order can really be filled near the 09:15 print is something only paper trading with real quotes can tell us; until then plan with the lower number.
+
+## Operations
+- `python -m mlq.paper.status` gives a plain-English health check (did the 7:30 PM job finish, account value, holdings, alerts).
+- Scheduled runs were being killed (Windows code 0xC000013A, i.e. the console window of the task was closed). The task now runs hidden (`-WindowStyle Hidden`).

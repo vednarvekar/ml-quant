@@ -26,3 +26,4 @@ Status: DRAFT v0.2 (2026-11-09) - facts verified, user decisions recorded in doc
 | 17 | [Baseline results](17-baseline-results.md) | Phase 2 gate, swing + intraday leaderboards, Phase 4 plan |
 | 18 | [Audit](18-audit-2026-11-10.md) | Independent end-to-end audit: what is solid, what is not |
 | 19 | [Audit response](19-audit-response.md) | Fixes, honest re-test, verdict |
+| 20 | [Holdout 2013-2021](20-holdout-2013-2021.md) | Frozen strategies on 9 unseen years |

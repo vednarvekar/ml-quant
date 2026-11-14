@@ -2,6 +2,8 @@
 
 Everything below is reproducible: `python -m mlq.rebuild`, `python -m mlq.swing`, `python -m mlq.intraday_strats`. All runs are logged in `data/experiments.jsonl` (the registry), so Deflated Sharpe counts every try.
 
+> Note (2026-11-14): `mlq.intraday_strats`, `mlq.ml_intraday`, `mlq.futures_run` and `mlq.compare` were removed as dead ends; recover them from git history (commit `abca7e8`).
+
 ## Phase 2 gate: PASSED (daily + 5-minute engines)
 | Requirement | Evidence |
 |---|---|

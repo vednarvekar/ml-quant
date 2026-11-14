@@ -1,26 +1,28 @@
 # ml-quant
 
-Research platform for systematic trading of Indian equities (NSE) with small, specialised ML models, built around the Upstox API. Python for research now, Rust execution engine later.
+Research platform for systematic trading of Indian equities (NSE) with small ML models, built around the Upstox API. Python for research now, Rust execution engine later.
 
-**Status:** research phase. Data foundation, backtest harness and first baselines/ML experiments are done. Nothing here is a proven money-maker and no live trading exists yet. See [docs/17-baseline-results.md](docs/17-baseline-results.md) for the honest numbers.
+**Status:** research + paper trading (pretend money, no real orders). Nothing here is a proven money-maker yet. Honest numbers: [docs/19-audit-response.md](docs/19-audit-response.md), [docs/20-holdout-2013-2021.md](docs/20-holdout-2013-2021.md).
 
-## What is here
-- `docs/` - full plan (vision, data, strategies, models, backtest/costs/risk, phases) and findings. Start with [docs/README.md](docs/README.md).
-- `src/mlq/upstox/` - Upstox V3 historical downloader (daily from 2005, 5-minute from 2022), rate-limit safe and resumable.
-- `src/mlq/` - cleaning, corporate-action/adjustment checks, point-in-time liquidity universe, context data (India VIX, indices, FRED, participant OI), India cost model, daily and 5-minute backtest engines, purged walk-forward / CPCV / Deflated Sharpe, experiment registry, baselines, and the first LightGBM experiments.
-- `tests/` - unit tests (null-strategy and no-lookahead tests for both engines).
+## Layout
+- `docs/` - plan and findings. Start with [docs/README.md](docs/README.md).
+- `src/mlq/upstox/` - Upstox V3 historical downloader (daily 2005+, 5-minute 2022+).
+- `src/mlq/` data: `nse_bhav`, `nse_fo`, `nse_mto` (NSE archives), `clean`, `adjust`, `adjust_5m`, `review`, `universe`, `context`, `rebuild`.
+- `src/mlq/` research: `costs`, `backtest`, `intraday`, `futures`, `futures_bt`, `validation`, `registry`, `evaluate`, `swing`, `swing_portfolio`, `baselines`, `ml_swing`, `ml_v2` (current model), `compare_v2`, `compare_ls`, `exec_test`, `holdout`.
+- `src/mlq/paper/` - daily paper trader (`run`, `status`).
+- `scripts/paper_daily.ps1` - Windows scheduled-task wrapper.
+- `tests/` - unit tests.
 
 ## Quick start
 ```bash
 uv sync
-cp .env.example .env        # add your Upstox analytics token (read-only market data)
-uv run python -m mlq.upstox.bulk            # download Nifty 100 history
+cp .env.example .env                        # Upstox analytics token (read-only)
+uv run python -m mlq.upstox.bulk            # download history
 uv run python -m mlq.rebuild                # clean -> adjust -> universe -> calendar
 uv run pytest
-uv run python -m mlq.swing                  # swing baselines
-uv run python -m mlq.ml_swing               # ML swing experiment
+uv run python -m mlq.paper.run --update     # one paper-trading day
+uv run python -m mlq.paper.status           # plain-English status
 ```
 Data, tokens and `.env` are git-ignored; never commit them.
 
-## Principles
-Cost-first (India STT, brokerage, slippage on every fill), no look-ahead (signals trade at the next open), every trial logged so Deflated Sharpe is honest, and a new idea must beat simple baselines before it earns more complexity.
+Removed research dead-ends (intraday rule families, intraday ML, old v1 comparison and futures runner) live in git history before commit `abca7e8`.

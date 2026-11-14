@@ -48,7 +48,15 @@ def refresh_data(refresh_instruments_days: int = 7) -> dict:
             download(name.replace(" ", "_"), idx_keys[name], "days", 1, date(2005, 1, 1), end, token, th, root=root)
         except Exception as e:                                   # noqa: BLE001
             failed.append((name, str(e)[:80]))
-    return {"symbols": len(syms), "skipped_no_key": skipped, "failed": failed}
+    # 1-minute candles of the live stock-futures contracts (real fill prices; lost once a contract
+    # expires, so archive every evening). Never blocks the paper run.
+    try:
+        from mlq.upstox import fut_minutes
+        fut = fut_minutes.refresh(0.25)
+        fut = {"contracts": fut["contracts"], "failed": len(fut["failed"])}
+    except Exception as e:                                       # noqa: BLE001
+        fut = {"error": str(e)[:80]}
+    return {"symbols": len(syms), "skipped_no_key": skipped, "failed": failed, "futures_minutes": fut}
 
 
 def rebuild_offline() -> None:

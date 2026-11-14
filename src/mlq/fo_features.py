@@ -22,7 +22,8 @@ ROLL_DAYS = 2
 
 def load_fo() -> pl.DataFrame:
     fs = sorted(FO_DIR.glob("*.parquet"))
-    return pl.concat([pl.read_parquet(f) for f in fs]).filter(pl.col("kind") == "S")
+    from mlq.backfill import apply_alias
+    return apply_alias(pl.concat([pl.read_parquet(f) for f in fs]).filter(pl.col("kind") == "S"))
 
 
 def _wide(df: pl.DataFrame, col: str, dates: list, syms: list) -> np.ndarray:
@@ -102,7 +103,7 @@ def build(ctx, adj_dir=None, with_prices=True) -> dict:
     return f
 
 
-def exdiv_prices(ctx, adj_dir=None):
+def exdiv_prices(ctx, adj_dir=None, zero_flagged=False):
     """Open/close matrices with DIVIDENDS removed: use raw (unadjusted) returns on ordinary days,
     adjusted returns on split/bonus days (|raw - adjusted| large). Anchored at the last close."""
     adj_dir = adj_dir or DATA / "clean" / "adj_daily"
@@ -114,14 +115,18 @@ def exdiv_prices(ctx, adj_dir=None):
     for j, s in enumerate(ctx.syms):
         f = adj_dir / f"{s}.parquet"
         if not f.exists():
+            f = DATA / "clean" / "adj_daily_bf" / f"{s}.parquet"
+        if not f.exists():
             continue
-        d = pl.read_parquet(f, columns=["date", "close", "open", "ret", "ret_raw", "raw_close"]).sort("date")
+        d = pl.read_parquet(f, columns=["date", "close", "open", "ret", "ret_raw", "raw_close", "exclude_ret"]).sort("date")
         idx = np.array([ri[x] for x in d["date"].to_list() if x in ri])
         keep = np.array([x in ri for x in d["date"].to_list()])
         d = d.filter(pl.Series(keep))
         ret, rr = d["ret"].to_numpy(), d["ret_raw"].to_numpy()
         fr = np.where(np.isfinite(rr) & np.isfinite(ret) & (np.abs(rr - ret) < 0.03), rr, ret)
         fr = np.nan_to_num(fr, nan=0.0)
+        if zero_flagged:                                  # diagnostic: remove unexplained jumps
+            fr = np.where(d["exclude_ret"].fill_null(False).to_numpy() | (np.abs(fr) > 0.35), 0.0, fr)
         c_adj = d["close"].to_numpy()
         lvl = np.empty(len(fr))
         lvl[-1] = c_adj[-1]
@@ -156,5 +161,7 @@ def mto_matrix(ctx) -> np.ndarray:
     fs = sorted(d.glob("*.parquet"))
     if not fs:
         return np.full((len(ctx.dates), len(ctx.syms)), np.nan)
-    df = pl.concat([pl.read_parquet(f, columns=["date", "sym", "deliv_pct"]) for f in fs])
+    from mlq.backfill import apply_alias
+    df = apply_alias(pl.concat([pl.read_parquet(f, columns=["date", "sym", "deliv_pct"]) for f in fs]))
+    df = df.unique(["date", "sym"], keep="first")
     return _wide(df, "deliv_pct", ctx.dates, ctx.syms)

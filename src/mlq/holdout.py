@@ -30,7 +30,8 @@ def coverage(ctx) -> pl.DataFrame:
         fs = sorted((DATA / "raw" / "nse_fo").glob(f"{y}-06-*.parquet"))[:1]
         if not fs:
             continue
-        d = pl.read_parquet(fs[0])
+        from mlq.backfill import apply_alias
+        d = apply_alias(pl.read_parquet(fs[0]))
         stk = set(d.filter(pl.col("kind") == "S")["sym"].unique().to_list())
         rows.append({"year": y, "fo_stocks": len(stk), "we_have": len(stk & have),
                      "pct": round(len(stk & have) / max(len(stk), 1), 2)})
@@ -41,10 +42,13 @@ def main():
     ctx = make_ctx()
     T, N = ctx.close.shape
     fo = ff.build(ctx)
-    ox, cx, _ = ff.exdiv_prices(ctx)
+    import os
+    zf = os.environ.get("MLQ_ZERO_JUMPS") == "1"
+    ox, cx, _ = ff.exdiv_prices(ctx, zero_flagged=zf)
     member = fo["member"]
     lot_hist = ff.ffill_lots(np.where(member, fo["lot_hist"], np.nan))
-    pred0 = np.load(DATA / "clean" / "ml_v3_pred_raw.npy")
+    from mlq.backfill import enabled
+    pred0 = np.load(DATA / "clean" / ("ml_v3_bf_pred_raw.npy" if enabled() else "ml_v3_pred_raw.npy"))
     if pred0.shape[0] < T:                      # file saved before newer days were added
         pred0 = np.vstack([pred0, np.full((T - pred0.shape[0], N), np.nan)])
     pred = np.where(member & np.isfinite(pred0), pred0, np.nan)
@@ -99,9 +103,10 @@ def main():
             rows.append({"strategy": f"{nm} buy&hold", "sharpe_mean": round(s["sharpe"], 2),
                          "cagr_mean": round(s["cagr"], 3), "maxdd_worst": round(s["max_dd"], 3)})
     df = pl.DataFrame(rows, infer_schema_length=None)
-    df.write_csv(DATA / "clean" / "holdout_results.csv")
+    sfx = ("_bf" if enabled() else "") + ("_nojumps" if zf else "")
+    df.write_csv(DATA / "clean" / f"holdout_results{sfx}.csv")
     yd = pl.DataFrame(yearly)
-    yd.write_csv(DATA / "clean" / "holdout_yearly.csv")
+    yd.write_csv(DATA / "clean" / f"holdout_yearly{sfx}.csv")
     with pl.Config(tbl_rows=40, tbl_width_chars=200, fmt_str_lengths=60):
         print(df)
         print(yd)

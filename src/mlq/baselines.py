@@ -21,6 +21,9 @@ START = "2022-01-03"
 
 def load_prices() -> pl.DataFrame:
     fs = glob.glob(str(DATA / "clean" / "adj_daily" / "*.parquet"))
+    from mlq.backfill import enabled
+    if enabled():                    # research only: add bhavcopy-built names (survivorship fix)
+        fs += glob.glob(str(DATA / "clean" / "adj_daily_bf" / "*.parquet"))
     return pl.concat([pl.read_parquet(f).with_columns(pl.lit(Path(f).stem).alias("sym"))
                       .select(["sym", "date", "open", "high", "low", "close", "volume", "exclude_ret"]) for f in fs])
 
